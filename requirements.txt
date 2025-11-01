@@ -1,0 +1,8 @@
+earthengine-api
+pandas
+tqdm
+requests
+geopy
+scipy
+numpy
+matplotlib
