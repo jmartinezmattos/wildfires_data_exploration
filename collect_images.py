@@ -14,6 +14,7 @@ OUTPUT_IMG_DIR = "data/firms_images" + f"_{DETECTION_SOURCE}" + f"_{IMAGES_SATEL
 OUTPUT_CSV = f"{OUTPUT_IMG_DIR}/firms_features.csv"
 BUFFER_METERS = 2000
 THUMB_SIZE = 1024  # px
+MAX_IMAGES_PER_POINT = 1
 
 MAX_TIME_DIFF_HOURS = 10
 
@@ -233,8 +234,7 @@ def check_valid_image(image, satellite):
     
     return True
         
-
-def process_data(detected_coordinates_df, images_satellite):
+def process_data(detected_coordinates_df, images_satellite, max_images_per_point):
     with open(OUTPUT_CSV, 'w', newline='', encoding='utf-8') as f:
         pd.DataFrame(columns=COLUMNS).to_csv(f, index=False)
 
@@ -250,14 +250,21 @@ def process_data(detected_coordinates_df, images_satellite):
         datetime_str = f"{date_str}T{time_formatted}"
         
         alert_dt = datetime.datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        min_dt = alert_dt - datetime.timedelta(hours=1)
         max_dt = alert_dt + datetime.timedelta(hours=MAX_TIME_DIFF_HOURS)
 
-        collection = get_collection(alert_dt, max_dt, point, images_satellite)
+        collection = get_collection(min_dt, max_dt, point, images_satellite)
 
-        image = collection.first() # Primer imagen después de la alerta
+        images_list = collection.toList(max_images_per_point)
+        n_images = min(images_list.size().getInfo(), max_images_per_point)
 
-        if check_valid_image(image, images_satellite):
-            process_and_download(image, point, idx, datetime_str, images_satellite)
+        for i in range(n_images):
+            try:
+                image = ee.Image(images_list.get(i))
+                if check_valid_image(image, images_satellite):
+                    process_and_download(image, point, f"{idx}_{i+1}", datetime_str, images_satellite)
+            except Exception as e:
+                print(f"Error procesando imagen {i+1} para punto {idx}: {e}")
 
 
 if __name__ == "__main__":
@@ -273,7 +280,7 @@ if __name__ == "__main__":
     firms_data = clean_firms_df(firms_data, exclude_points=[(-32.86024,-56.54006)])
     print(f"{len(firms_data)} puntos cargados desde {CSV_PATH}")
 
-    process_data(firms_data, IMAGES_SATELLITE)
+    process_data(firms_data, IMAGES_SATELLITE, MAX_IMAGES_PER_POINT)
 
     print(f"Archivo CSV guardado en: {OUTPUT_CSV}")
     print(f"Miniaturas guardadas en: {OUTPUT_IMG_DIR}")
