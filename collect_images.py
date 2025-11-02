@@ -6,16 +6,11 @@ import requests
 import datetime
 from datetime import timezone
 from geopy.distance import geodesic
-from scipy.spatial import cKDTree
-import numpy as np
 
-
-ee.Initialize(project='cellular-retina-276416')
-
-#CSV_PATH = "data/viirs-jpss1_2024_Uruguay.csv"
+IMAGES_SATELLITE = "sentinel-2" # "landsat-8" or "sentinel-2"
 CSV_PATH = "firms_datasets/merged_modis_Uruguay.csv"
 DETECTION_SOURCE = CSV_PATH.split('/')[-1].replace('.csv','')
-OUTPUT_IMG_DIR = "data/firms_images" + f"_{DETECTION_SOURCE}" + f"_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+OUTPUT_IMG_DIR = "data/firms_images" + f"_{DETECTION_SOURCE}" + f"_{IMAGES_SATELLITE}" + f"_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 OUTPUT_CSV = f"{OUTPUT_IMG_DIR}/firms_features.csv"
 BUFFER_METERS = 2000
 THUMB_SIZE = 1024  # px
@@ -25,8 +20,6 @@ MAX_TIME_DIFF_HOURS = 10
 CLOUD_FILTER_PERCENTAGE = 85  # porcentaje máximo de nubes permitido
 
 COLUMNS = ['latitude', 'longitude', 'FIRMS_date', 'image_date', 'date_diff_hours', 'NDVI', 'NDWI', 'NBR', 'fire_score', 'cloud_pct', 'thumbnail_file', 'satellite_image_source', 'detecion_source']
-
-os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
 
 def clean_firms_df(df: pd.DataFrame, exclude_points: list, radius_km: float=3) -> pd.DataFrame:
     """
@@ -53,22 +46,29 @@ def clean_firms_df(df: pd.DataFrame, exclude_points: list, radius_km: float=3) -
         keep_mask.append(keep)
     
     clean_df = df[keep_mask].reset_index(drop=True)
-    # clean_df = deduplicate_close_points(clean_df, threshold_km=1)
 
     return clean_df
 
 # Función para descargar thumbnail
-def download_thumbnail(image, filename, point, bands=['B4','B3','B2'], size=THUMB_SIZE):
+def download_thumbnail(image, filename, point, satellite, bands=['B4','B3','B2'], size=THUMB_SIZE):
 
     region = point.buffer(BUFFER_METERS).bounds().getInfo()['coordinates'][0]
+
+    if satellite == "landsat-8":
+        bands = ['SR_B4', 'SR_B3', 'SR_B2']
+        image = image.select(bands).multiply(0.0000275).add(-0.2)
+        vmin, vmax = 0, 0.3  # reflectancia ya escalada
+    else:  # sentinel-2
+        bands = ['B4', 'B3', 'B2']
+        vmin, vmax = 0, 6000
 
     try:
         thumb_url = image.getThumbURL({
             'dimensions': size, # pixels
             'region': region, # region geografica
             'bands': bands,
-            'min': 0,
-            'max': 6000,
+            'min': vmin,
+            'max': vmax,
         })
         r = requests.get(thumb_url)
         if r.status_code == 200:
@@ -89,23 +89,44 @@ def process_and_download(image, point, idx, datetime_str, satellite):
 
     print(f"Procesando punto {idx} en ({lat}, {lon}) con imagen del {datetime_str} de {satellite}")
 
-    # Calcular índices
     try:
-        ndvi = image.normalizedDifference(['B8','B4']).rename('NDVI')
-        ndwi = image.normalizedDifference(['B3','B8']).rename('NDWI')
-        nbr = image.normalizedDifference(['B8','B12']).rename('NBR')
-        image = image.addBands([ndvi, ndwi, nbr])
+        if satellite == "sentinel-2":
+            ndvi = image.normalizedDifference(['B8','B4']).rename('NDVI')
+            ndwi = image.normalizedDifference(['B3','B8']).rename('NDWI')
+            nbr = image.normalizedDifference(['B8','B12']).rename('NBR')
 
-        # Calcular fire_score sin eliminar bandas originales
-        fire_score = image.expression(
-            '(NDVI * 0.5) + (NDWI * 0.3) + (1 - NBR) * 0.2',
-            {'NDVI': image.select('NDVI'),
-            'NDWI': image.select('NDWI'),
-            'NBR': image.select('NBR')}
-        ).rename('fire_score')
-        image = image.addBands(fire_score)
+        elif satellite == "landsat-8":
+            # Convertir reflectancia a escala real (Landsat SR usa escala 0–10000)
+
+            # optical_bands = ['SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7']
+            # image = image.select(optical_bands).multiply(0.0000275).add(-0.2).rename(optical_bands)
+
+            # ndvi = image.normalizedDifference(['SR_B5', 'SR_B4']).rename('NDVI')
+            # ndwi = image.normalizedDifference(['SR_B3', 'SR_B5']).rename('NDWI')
+            # nbr = image.normalizedDifference(['SR_B5', 'SR_B7']).rename('NBR')
+            ndvi, ndwi, nbr = 0, 0, 0
+
+
+        else:
+            raise ValueError(f"Satélite no soportado: {satellite}")
+        
+        image = image.addBands([ndvi, ndwi, nbr])
     except Exception:
         print(f"Error al calcular índices para punto {idx}")
+        return
+    try:
+        if satellite == "landsat-8":
+            fire_score = 0
+        else:
+            fire_score = image.expression(
+                '(NDVI * 0.5) + (NDWI * 0.3) + (1 - NBR) * 0.2',
+                {'NDVI': image.select('NDVI'),
+                'NDWI': image.select('NDWI'),
+                'NBR': image.select('NBR')}
+            ).rename('fire_score')
+            image = image.addBands(fire_score)
+    except Exception:
+        print(f"Error al calcular fire_score para punto {idx}")
 
     # Reducir a valor medio alrededor del punto
     try:
@@ -122,12 +143,8 @@ def process_and_download(image, point, idx, datetime_str, satellite):
         print(f"Error al reducir región para punto {idx}")
         mean_ndvi = mean_ndwi = mean_nbr = mean_score = None
 
-    # Fecha de la imagen
-    try:
-        img_date = datetime.datetime.utcfromtimestamp(image.get('system:time_start').getInfo() / 1000).isoformat()
-    except Exception:
-        print(f"No se pudo obtener la fecha de la imagen para punto {idx}")
-        img_date = None
+    millis = image.get('system:time_start').getInfo()
+    img_date = datetime.datetime.utcfromtimestamp(millis / 1000).isoformat()
 
     try:
         cloud_pct = image.get('CLOUDY_PIXEL_PERCENTAGE').getInfo()
@@ -137,14 +154,21 @@ def process_and_download(image, point, idx, datetime_str, satellite):
     # Descargar miniatura
     try:
         img_filename = os.path.join(OUTPUT_IMG_DIR, f"point_{idx}.png")
-        download_thumbnail(image, img_filename, point)
+        download_thumbnail(image, img_filename, point, satellite)
     except Exception as e:
         print(f"No se pudo descargar miniatura para punto {idx}: {e}")
         img_filename = None
 
     alert_dt = datetime.datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-    img_date_dt = datetime.datetime.fromisoformat(img_date).replace(tzinfo=timezone.utc)
-    date_diff_hours = round((img_date_dt - alert_dt).total_seconds() / 3600, 2)
+
+    if isinstance(img_date, str):
+        img_date_dt = datetime.datetime.fromisoformat(img_date).replace(tzinfo=timezone.utc)
+        date_diff_hours = round((img_date_dt - alert_dt).total_seconds() / 3600, 2)
+    else:
+        print(f"Advertencia: img_date es None para punto {idx}")
+        img_date_dt = None
+        date_diff_hours = None
+
 
     result = {
         'latitude': lat,
@@ -173,20 +197,44 @@ def get_collection(alert_dt, max_dt, point, satellite="sentinel-2"):
 
     if satellite == "sentinel-2":
         collection_string = "COPERNICUS/S2_SR_HARMONIZED"
+        cloud_property = "CLOUDY_PIXEL_PERCENTAGE"
+        cloud_filter = ee.Filter.lt(cloud_property, CLOUD_FILTER_PERCENTAGE)
     elif satellite == "landsat-8":
         collection_string = "LANDSAT/LC08/C02/T1_L2"
+        cloud_filter = ee.Filter.lt('CLOUD_COVER', CLOUD_FILTER_PERCENTAGE)
+    else:
+        raise ValueError(f"Satélite no soportado: {satellite}")
 
-    collection = (
-        ee.ImageCollection(collection_string)
-        .filterBounds(point)
-        .filterDate(alert_dt, max_dt)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", CLOUD_FILTER_PERCENTAGE))
-        .sort('system:time_start')
-    )
+    collection = ee.ImageCollection(collection_string).filterBounds(point).filterDate(alert_dt, max_dt)
+
+    if cloud_filter:
+        collection = collection.filter(cloud_filter)
+
+    collection = collection.sort('system:time_start')
 
     return collection
 
-def process_data(detected_coordinates_df):
+def check_valid_image(image, satellite):
+
+    if satellite == "sentinel-2":
+        required_bands = ['B8','B4','B3','B12']
+    elif satellite == "landsat-8":
+        required_bands = ['SR_B5', 'SR_B4', 'SR_B3', 'SR_B7']
+    else:
+        raise ValueError(f"Satélite no soportado: {satellite}")
+
+    if image is not None and image.getInfo() is not None:
+            bands = image.bandNames().getInfo()
+
+            if not all(b in bands for b in required_bands):
+                return False
+    else:
+        return False
+    
+    return True
+        
+
+def process_data(detected_coordinates_df, images_satellite):
     with open(OUTPUT_CSV, 'w', newline='', encoding='utf-8') as f:
         pd.DataFrame(columns=COLUMNS).to_csv(f, index=False)
 
@@ -204,46 +252,19 @@ def process_data(detected_coordinates_df):
         alert_dt = datetime.datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
         max_dt = alert_dt + datetime.timedelta(hours=MAX_TIME_DIFF_HOURS)
 
-        collection = get_collection(alert_dt, max_dt, point, satellite="sentinel-2")
+        collection = get_collection(alert_dt, max_dt, point, images_satellite)
 
         image = collection.first() # Primer imagen después de la alerta
 
-        if image is not None and image.getInfo() is not None:
-            bands = image.bandNames().getInfo()
-            required_sentinel_bands = ['B8','B4','B3','B12']
-
-            if not all(b in bands for b in required_sentinel_bands):
-                image = None
-            else:
-                satellite = 'sentinel-2'
-
-        # if image is None or image.getInfo() is None:
-        #     collection_landsat = (
-        #         ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
-        #         .filterBounds(point)
-        #         .filterDate(alert_dt, max_dt)
-        #         .sort('system:time_start')
-        #     )
-
-        #     image = collection_landsat.first()
-
-        #     if image is not None and image.getInfo() is not None:
-        #         satellite = 'Landsat-8'
-        #         image = image.rename(['B2','B3','B4','B5','B6','B7'])
-
-        #         bands = image.bandNames().getInfo()
-        #         required_landsat_bands = ['B2','B3','B4','B5','B6','B7']
-        #         if not all(b in bands for b in required_landsat_bands):
-        #             image = None
-
-        #     else:
-        #         satellite = 'None'
-
-        if image is not None and image.getInfo() is not None:
-            process_and_download(image, point, idx, datetime_str, satellite)
+        if check_valid_image(image, images_satellite):
+            process_and_download(image, point, idx, datetime_str, images_satellite)
 
 
 if __name__ == "__main__":
+
+    ee.Initialize(project='cellular-retina-276416')
+
+    os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
 
     print("Iniciando procesamiento de datos...")
     print(f"Archivo de detecciones de entrada: {CSV_PATH}")
@@ -252,7 +273,7 @@ if __name__ == "__main__":
     firms_data = clean_firms_df(firms_data, exclude_points=[(-32.86024,-56.54006)])
     print(f"{len(firms_data)} puntos cargados desde {CSV_PATH}")
 
-    process_data(firms_data)
+    process_data(firms_data, IMAGES_SATELLITE)
 
     print(f"Archivo CSV guardado en: {OUTPUT_CSV}")
     print(f"Miniaturas guardadas en: {OUTPUT_IMG_DIR}")
