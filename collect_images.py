@@ -9,68 +9,24 @@ from geopy.distance import geodesic
 from scipy.spatial import cKDTree
 import numpy as np
 
-# Inicializar Earth Engine con tu proyecto
+
 ee.Initialize(project='cellular-retina-276416')
 
-# Parámetros
 #CSV_PATH = "data/viirs-jpss1_2024_Uruguay.csv"
 CSV_PATH = "firms_datasets/merged_modis_Uruguay.csv"
 DETECTION_SOURCE = CSV_PATH.split('/')[-1].replace('.csv','')
-OUTPUT_IMG_DIR = "data/viirs_thumbnails"
-OUTPUT_CSV = f"{OUTPUT_IMG_DIR}/viirs_features.csv"
-BUFFER_METERS = 1000
-THUMB_SIZE = 512  # px
+OUTPUT_IMG_DIR = "data/firms_images" + f"_{DETECTION_SOURCE}" + f"_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+OUTPUT_CSV = f"{OUTPUT_IMG_DIR}/firms_features.csv"
+BUFFER_METERS = 2000
+THUMB_SIZE = 1024  # px
 
-MAX_TIME_DIFF_HOURS = 20  # horas
+MAX_TIME_DIFF_HOURS = 10
 
-CLOUD_FILTER_PERCENTAGE = 90  # porcentaje máximo de nubes permitido
+CLOUD_FILTER_PERCENTAGE = 85  # porcentaje máximo de nubes permitido
 
 COLUMNS = ['latitude', 'longitude', 'FIRMS_date', 'image_date', 'date_diff_hours', 'NDVI', 'NDWI', 'NBR', 'fire_score', 'cloud_pct', 'thumbnail_file', 'satellite_image_source', 'detecion_source']
 
 os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
-
-# Cargar CSV
-data = pd.read_csv(CSV_PATH)
-print(f"{len(data)} puntos cargados desde {CSV_PATH}")
-
-# Revisar esta funcion, elimina por cercania en distancia pero ignora fechas
-def deduplicate_close_points(df: pd.DataFrame, threshold_km: float = 1) -> pd.DataFrame:
-    """
-    Elimina puntos duplicados que estén a menos de `threshold_km` usando KD-Tree para mayor velocidad.
-    
-    Parámetros:
-    - df: pandas.DataFrame con columnas 'latitude' y 'longitude'
-    - threshold_km: distancia mínima para considerar puntos distintos (default 1 km)
-    
-    Retorna:
-    - pandas.DataFrame filtrado
-    """
-    print(f"Eliminando puntos duplicados a menos de {threshold_km} km...")
-    
-    # Convertir lat/lon a coordenadas aproximadas en km usando proyección simple
-    lat = df['latitude'].to_numpy()
-    lon = df['longitude'].to_numpy()
-    # Aproximación: 1° lat ≈ 111 km, 1° lon ≈ 111 km * cos(lat)
-    x = lon * 111 * np.cos(np.radians(lat))
-    y = lat * 111
-    points = np.column_stack([x, y])
-    
-    tree = cKDTree(points)
-    to_keep = np.ones(len(df), dtype=bool)
-    
-    for i in range(len(df)):
-        if not to_keep[i]:
-            continue
-        # Encontrar vecinos dentro del umbral (excluye el mismo punto)
-        idx = tree.query_ball_point(points[i], r=threshold_km)
-        idx.remove(i)
-        to_keep[idx] = False  # eliminar vecinos cercanos
-        if len(idx) > 0:
-            print(f"Punto {i} mantiene, eliminando {len(idx)} puntos cercanos.")
-    
-    df_filtered = df[to_keep].reset_index(drop=True)
-    print(f"Puntos después de eliminar duplicados: {len(df_filtered)}")
-    return df_filtered
 
 def clean_firms_df(df: pd.DataFrame, exclude_points: list, radius_km: float=3) -> pd.DataFrame:
     """
@@ -101,8 +57,6 @@ def clean_firms_df(df: pd.DataFrame, exclude_points: list, radius_km: float=3) -
 
     return clean_df
 
-data = clean_firms_df(data, exclude_points=[(-32.86024,-56.54006)])
-
 # Función para descargar thumbnail
 def download_thumbnail(image, filename, point, bands=['B4','B3','B2'], size=THUMB_SIZE):
 
@@ -126,7 +80,6 @@ def download_thumbnail(image, filename, point, bands=['B4','B3','B2'], size=THUM
     except Exception as e:
         print(f"Error al generar miniatura: {e}")
     return False
-
 
 def process_and_download(image, point, idx, datetime_str, satellite):
 
@@ -216,7 +169,6 @@ def process_and_download(image, point, idx, datetime_str, satellite):
         index=False
     )
 
-
 def get_collection(alert_dt, max_dt, point, satellite="sentinel-2"):
 
     if satellite == "sentinel-2":
@@ -234,15 +186,13 @@ def get_collection(alert_dt, max_dt, point, satellite="sentinel-2"):
 
     return collection
 
-def process_data():
+def process_data(detected_coordinates_df):
     with open(OUTPUT_CSV, 'w', newline='', encoding='utf-8') as f:
         pd.DataFrame(columns=COLUMNS).to_csv(f, index=False)
 
-    # Procesar cada punto
-    for idx, row in tqdm(data.iterrows(), total=len(data)):
+    for idx, row in tqdm(detected_coordinates_df.iterrows(), total=len(detected_coordinates_df)):
         lat, lon = row['latitude'], row['longitude']
 
-        # FIRMS guarda en UTC
         date_str = row['acq_date']
         time_str = str(row['acq_time']).zfill(4) 
         
@@ -298,7 +248,11 @@ if __name__ == "__main__":
     print("Iniciando procesamiento de datos...")
     print(f"Archivo de detecciones de entrada: {CSV_PATH}")
 
-    process_data()
+    firms_data = pd.read_csv(CSV_PATH)
+    firms_data = clean_firms_df(firms_data, exclude_points=[(-32.86024,-56.54006)])
+    print(f"{len(firms_data)} puntos cargados desde {CSV_PATH}")
+
+    process_data(firms_data)
 
     print(f"Archivo CSV guardado en: {OUTPUT_CSV}")
     print(f"Miniaturas guardadas en: {OUTPUT_IMG_DIR}")
