@@ -20,7 +20,7 @@ if IMAGES_SATELLITE == "aqua" or IMAGES_SATELLITE == "fengyun":
     THUMB_SIZE = 1024  # px
 
 
-MAX_IMAGES_PER_POINT = 1
+MAX_IMAGES_PER_POINT = 3
 
 MAX_TIME_DIFF_HOURS = 10
 
@@ -230,6 +230,10 @@ def get_collection(alert_dt, max_dt, point, satellite="sentinel-2"):
 
     collection = ee.ImageCollection(collection_string).filterBounds(point).filterDate(alert_dt, max_dt)
 
+    collection_size = collection.size().getInfo()
+    if collection_size == 0:
+        return None
+
     if cloud_filter:
         collection = collection.filter(cloud_filter)
 
@@ -281,16 +285,17 @@ def process_data(detected_coordinates_df, images_satellite, max_images_per_point
 
         collection = get_collection(min_dt, max_dt, point, images_satellite)
 
-        images_list = collection.toList(max_images_per_point)
-        n_images = min(images_list.size().getInfo(), max_images_per_point)
+        if collection is not None:
+            images_list = collection.toList(max_images_per_point)
+            n_images = min(images_list.size().getInfo(), max_images_per_point)
 
-        for i in range(n_images):
-            try:
-                image = ee.Image(images_list.get(i))
-                if check_valid_image(image, images_satellite):
-                    process_and_download(image, point, f"{idx}_{i+1}", datetime_str, images_satellite)
-            except Exception as e:
-                print(f"Error procesando imagen {i+1} para punto {idx}: {e}")
+            for i in range(n_images):
+                try:
+                    image = ee.Image(images_list.get(i))
+                    if check_valid_image(image, images_satellite):
+                        process_and_download(image, point, f"{idx}_{i+1}", datetime_str, images_satellite)
+                except Exception as e:
+                    print(f"Error procesando imagen {i+1} para punto {idx}: {e}")
 
 
 if __name__ == "__main__":
