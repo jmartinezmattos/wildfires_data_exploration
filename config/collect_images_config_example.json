@@ -1,0 +1,14 @@
+{
+    "IMAGES_SATELLITE": "sentinel-2",
+    "CSV_PATH": "data/firms_data/MODIS/Paraguay/modis_Paraguay_merged.csv",
+    "OUTPUT_IMG_DIR_BASE": "data/firms_images",
+    "BUFFER_METERS": {
+        "default": 2000,
+        "aqua": 30000,
+        "fengyun": 30000
+    },
+    "THUMB_SIZE": 1024,
+    "MAX_IMAGES_PER_POINT": 3,
+    "MAX_TIME_DIFF_HOURS": 10,
+    "CLOUD_FILTER_PERCENTAGE": 85
+}

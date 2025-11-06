@@ -5,3 +5,4 @@ __pycache__
 data
 checkpoints
 logs
+config/collect_images_config.json

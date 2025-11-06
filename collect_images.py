@@ -1,4 +1,5 @@
 import ee
+import json
 import pandas as pd
 from tqdm import tqdm
 import os
@@ -6,25 +7,27 @@ import requests
 import datetime
 from datetime import timezone
 from geopy.distance import geodesic
+import shutil
 
-IMAGES_SATELLITE = "aqua" # "landsat-8" or "sentinel-2" or "aqua" or "fengyun"
-CSV_PATH = "firms_datasets/merged_modis_Uruguay.csv"
-DETECTION_SOURCE = CSV_PATH.split('/')[-1].replace('.csv','')
-OUTPUT_IMG_DIR = "data/firms_images" + f"_{DETECTION_SOURCE}" + f"_{IMAGES_SATELLITE}" + f"_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+CONFG_FILE_NAME = "config/collect_images_config.json"
+
+# Load configuration
+with open(CONFG_FILE_NAME, "r") as f:
+    config = json.load(f)
+
+print(f"Configuración cargada: {config}")
+
+IMAGES_SATELLITE = config["IMAGES_SATELLITE"]
+CSV_PATH = config["CSV_PATH"]
+OUTPUT_IMG_DIR = f"{config['OUTPUT_IMG_DIR_BASE']}_{CSV_PATH.split('/')[-1].replace('.csv','')}_{IMAGES_SATELLITE}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+THUMB_SIZE = config["THUMB_SIZE"]
+MAX_IMAGES_PER_POINT = config["MAX_IMAGES_PER_POINT"]
+MAX_TIME_DIFF_HOURS = config["MAX_TIME_DIFF_HOURS"]
+CLOUD_FILTER_PERCENTAGE = config["CLOUD_FILTER_PERCENTAGE"]
 OUTPUT_CSV = f"{OUTPUT_IMG_DIR}/firms_features.csv"
-BUFFER_METERS = 2000
-THUMB_SIZE = 1024  # px
 
-if IMAGES_SATELLITE == "aqua" or IMAGES_SATELLITE == "fengyun":
-    BUFFER_METERS = 30*1000
-    THUMB_SIZE = 1024  # px
-
-
-MAX_IMAGES_PER_POINT = 3
-
-MAX_TIME_DIFF_HOURS = 10
-
-CLOUD_FILTER_PERCENTAGE = 85  # porcentaje máximo de nubes permitido
+# Set buffer depending on satellite type
+BUFFER_METERS = config["BUFFER_METERS"].get(IMAGES_SATELLITE, config["BUFFER_METERS"]["default"])
 
 COLUMNS = ['latitude', 'longitude', 'FIRMS_date', 'image_date', 'date_diff_hours', 'cloud_pct', 'thumbnail_file', 'satellite_image_source', 'detecion_source']
 
@@ -243,6 +246,9 @@ if __name__ == "__main__":
     ee.Initialize(project='cellular-retina-276416')
 
     os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
+
+    config_dest_path = os.path.join(OUTPUT_IMG_DIR, "config.json")
+    shutil.copy(CONFG_FILE_NAME, config_dest_path)
 
     print("Iniciando procesamiento de datos...")
     print(f"Archivo de detecciones de entrada: {CSV_PATH}")
