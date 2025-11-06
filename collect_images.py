@@ -25,6 +25,7 @@ MAX_IMAGES_PER_POINT = config["MAX_IMAGES_PER_POINT"]
 MAX_TIME_DIFF_HOURS = config["MAX_TIME_DIFF_HOURS"]
 CLOUD_FILTER_PERCENTAGE = config["CLOUD_FILTER_PERCENTAGE"]
 OUTPUT_CSV = f"{OUTPUT_IMG_DIR}/firms_features.csv"
+GEE_PROJECT = config.get("GEE_PROJECT")
 
 # Set buffer depending on satellite type
 BUFFER_METERS = config["BUFFER_METERS"].get(IMAGES_SATELLITE, config["BUFFER_METERS"]["default"])
@@ -271,7 +272,7 @@ def process_data(detected_coordinates_df, images_satellite, max_images_per_point
 
 if __name__ == "__main__":
 
-    ee.Initialize(project='cellular-retina-276416')
+    ee.Initialize(project=GEE_PROJECT)
 
     os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
 

@@ -1,4 +1,5 @@
-{
+{   
+    "GEE_PROJECT": "cellular-retina-276416",
     "IMAGES_SATELLITE": "sentinel-2",
     "CSV_PATH": "data/firms_data/MODIS/Paraguay/modis_Paraguay_merged.csv",
     "OUTPUT_IMG_DIR_BASE": "data/firms_images",
