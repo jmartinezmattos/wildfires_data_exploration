@@ -1,11 +1,20 @@
 import os
+import json
 import requests
 import pandas as pd
 from glob import glob
 from time import sleep
 
-COUNTRY = "Montenegro"            # Specify the country name as in FIRMS URL
-INSTRUMENT = "ALL"       # options: "MODIS", "VIIRS S-NPP", "VIIRS NOAA-20", "ALL"
+CONFG_FILE_NAME = "config/download_firms_csv_config.json"
+
+with open(CONFG_FILE_NAME, "r") as f:
+    config = json.load(f)
+
+COUNTRY = config.get("COUNTRY", None)
+INSTRUMENT = config.get("INSTRUMENT", "ALL") # Instument options: "MODIS", "VIIRS S-NPP", "VIIRS NOAA-20", "ALL"
+
+if COUNTRY is None:
+    raise ValueError("COUNTRY must be specified in the config file.")
 
 instrument_map = {
     "MODIS": "modis",
