@@ -284,7 +284,8 @@ def process_data(detected_coordinates_df, images_satellite, max_images_per_point
                 try:
                     image = ee.Image(images_list.get(i))
                     if check_valid_image(image, images_satellite):
-                        process_and_download(image, point, f"{idx}_{i+1}", datetime_str, images_satellite)
+                        im_idx = f"{idx}_{i+1}" if n_images > 1 else str(idx)
+                        process_and_download(image, point, im_idx, datetime_str, images_satellite)
                 except Exception as e:
                     print(f"Error procesando imagen {i+1} para punto {idx}: {e}")
 
