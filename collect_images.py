@@ -31,6 +31,34 @@ BUFFER_METERS = config["BUFFER_METERS"].get(IMAGES_SATELLITE, config["BUFFER_MET
 
 COLUMNS = ['latitude', 'longitude', 'FIRMS_date', 'image_date', 'date_diff_hours', 'cloud_pct', 'thumbnail_file', 'satellite_image_source', 'detecion_source']
 
+
+def filter_by_satellite_start_date(df: pd.DataFrame, satellite: str) -> pd.DataFrame:
+
+    SATELLITE_START_DATES = {
+        "sentinel-2": datetime.datetime(2015, 7, 1),
+        "landsat-8": datetime.datetime(2013, 2, 11),
+        "aqua": datetime.datetime(2002, 7, 4),
+        "fengyun": datetime.datetime(2016, 12, 7)
+    }
+
+    if satellite not in SATELLITE_START_DATES:
+        print(f"No se conoce la fecha mínima operativa para {satellite}. No se filtrará el DataFrame.")
+        return df.copy()
+
+    # Convertir columna de fechas a datetime
+    df_copy = df.copy()
+    df_copy['acq_date_dt'] = pd.to_datetime(df_copy['acq_date'], format="%Y-%m-%d", errors='coerce')
+
+    min_date = SATELLITE_START_DATES[satellite]
+    before_filter = len(df_copy)
+    df_filtered = df_copy[df_copy['acq_date_dt'] >= min_date].reset_index(drop=True)
+    after_filter = len(df_filtered)
+    print(f"Se eliminaron {before_filter - after_filter} puntos anteriores a {min_date.date()} para {satellite}")
+
+    df_filtered = df_filtered.drop(columns=['acq_date_dt'])
+    df_filtered = df_filtered.sort_values(by=['acq_date', 'acq_time'], ascending=[False, False]).reset_index(drop=True)
+    return df_filtered
+
 def clean_firms_df(df: pd.DataFrame, exclude_points: list, radius_km: float=3) -> pd.DataFrame:
     """
     Filtra los puntos del DataFrame eliminando aquellos que estén
@@ -143,7 +171,7 @@ def process_and_download(image, point, idx, datetime_str, satellite):
         'cloud_pct': cloud_pct,
         'thumbnail_file': os.path.basename(img_filename) if img_filename else None,
         'satellite_image_source': satellite,
-        'detecion_source': DETECTION_SOURCE
+        'detecion_source': CSV_PATH.split('/')[-1].replace('.csv', '')
     }
 
     pd.DataFrame([result]).to_csv(
@@ -254,7 +282,8 @@ if __name__ == "__main__":
     print(f"Archivo de detecciones de entrada: {CSV_PATH}")
 
     firms_data = pd.read_csv(CSV_PATH)
-    #firms_data = clean_firms_df(firms_data, exclude_points=[(-32.86024,-56.54006)])
+    firms_data = filter_by_satellite_start_date(firms_data, IMAGES_SATELLITE)
+
     print(f"{len(firms_data)} puntos cargados desde {CSV_PATH}")
 
     process_data(firms_data, IMAGES_SATELLITE, MAX_IMAGES_PER_POINT)
