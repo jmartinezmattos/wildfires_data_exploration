@@ -6,3 +6,4 @@ data
 checkpoints
 logs
 config/collect_images_config.json
+config/download_firms_csv_config.json
