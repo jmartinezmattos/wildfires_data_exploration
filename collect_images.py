@@ -11,21 +11,38 @@ import shutil
 
 CONFG_FILE_NAME = "config/collect_images_config.json"
 
-# Load configuration
 with open(CONFG_FILE_NAME, "r") as f:
     config = json.load(f)
 
+GEE_PROJECT = config.get("GEE_PROJECT")
+
 print(f"Configuración cargada: {config}")
 
-IMAGES_SATELLITE = config["IMAGES_SATELLITE"]
+old_run_dir = config.get("OLD_RUN_DIR", False)
+
+old_run = old_run_dir if old_run_dir and old_run_dir != "False" else False
+
+if old_run_dir and not os.path.exists(old_run_dir):
+    print(f"La carpeta de ejecución anterior {old_run_dir} no existe. Iniciando una nueva ejecución.")
+    old_run = False
+
+if old_run:
+    print(f"Cargando configuración de ejecución anterior {old_run}")
+    with open(f"{old_run}/config.json", "r") as f:
+        config = json.load(f)
+    OUTPUT_IMG_DIR = old_run
+
 CSV_PATH = config["CSV_PATH"]
-OUTPUT_IMG_DIR = f"{config['OUTPUT_IMG_DIR_BASE']}_{CSV_PATH.split('/')[-1].replace('.csv','')}_{IMAGES_SATELLITE}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+IMAGES_SATELLITE = config["IMAGES_SATELLITE"]
+
+if not old_run:
+    OUTPUT_IMG_DIR = f"{config['OUTPUT_IMG_DIR_BASE']}_{CSV_PATH.split('/')[-1].replace('.csv','')}_{IMAGES_SATELLITE}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
 THUMB_SIZE = config["THUMB_SIZE"]
 MAX_IMAGES_PER_POINT = config["MAX_IMAGES_PER_POINT"]
 MAX_TIME_DIFF_HOURS = config["MAX_TIME_DIFF_HOURS"]
 CLOUD_FILTER_PERCENTAGE = config["CLOUD_FILTER_PERCENTAGE"]
 OUTPUT_CSV = f"{OUTPUT_IMG_DIR}/firms_features.csv"
-GEE_PROJECT = config.get("GEE_PROJECT")
 
 # Set buffer depending on satellite type
 BUFFER_METERS = config["BUFFER_METERS"].get(IMAGES_SATELLITE, config["BUFFER_METERS"]["default"])
@@ -237,8 +254,10 @@ def check_valid_image(image, satellite):
     return True
         
 def process_data(detected_coordinates_df, images_satellite, max_images_per_point):
-    with open(OUTPUT_CSV, 'w', newline='', encoding='utf-8') as f:
-        pd.DataFrame(columns=COLUMNS).to_csv(f, index=False)
+    
+    if not os.path.exists(OUTPUT_CSV):
+        with open(OUTPUT_CSV, 'w', newline='', encoding='utf-8') as f:
+            pd.DataFrame(columns=COLUMNS).to_csv(f, index=False)
 
     for idx, row in tqdm(detected_coordinates_df.iterrows(), total=len(detected_coordinates_df)):
         lat, lon = row['latitude'], row['longitude']
@@ -284,6 +303,11 @@ if __name__ == "__main__":
 
     firms_data = pd.read_csv(CSV_PATH)
     firms_data = filter_by_satellite_start_date(firms_data, IMAGES_SATELLITE)
+
+    if old_run:
+        last_image = pd.read_csv(f'{old_run}/firms_features.csv').iloc[-1]['thumbnail_file'].split('_')[1]
+        print(f"Siguiendo desde imagen {last_image}...")
+        firms_data = firms_data.iloc[int(last_image)+1:]
 
     print(f"{len(firms_data)} puntos cargados desde {CSV_PATH}")
 
