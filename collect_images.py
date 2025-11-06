@@ -295,9 +295,6 @@ if __name__ == "__main__":
 
     os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
 
-    config_dest_path = os.path.join(OUTPUT_IMG_DIR, "config.json")
-    shutil.copy(CONFG_FILE_NAME, config_dest_path)
-
     print("Iniciando procesamiento de datos...")
     print(f"Archivo de detecciones de entrada: {CSV_PATH}")
 
@@ -308,6 +305,9 @@ if __name__ == "__main__":
         last_image = pd.read_csv(f'{old_run}/firms_features.csv').iloc[-1]['thumbnail_file'].split('_')[1]
         print(f"Siguiendo desde imagen {last_image}...")
         firms_data = firms_data.iloc[int(last_image)+1:]
+    else:
+        config_dest_path = os.path.join(OUTPUT_IMG_DIR, "config.json")
+        shutil.copy(CONFG_FILE_NAME, config_dest_path)
 
     print(f"{len(firms_data)} puntos cargados desde {CSV_PATH}")
 
