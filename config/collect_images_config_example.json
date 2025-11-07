@@ -1,15 +1,16 @@
 {   
     "GEE_PROJECT": "cellular-retina-276416",
     "IMAGES_SATELLITE": "sentinel-2",
-    "CSV_PATH": "data/firms_data/MODIS/Paraguay/modis_Paraguay_merged.csv",
-    "OUTPUT_IMG_DIR_BASE": "data/firms_images",
+    "COUNTRY": "Uruguay",
+    "FIRMS_INSTRUMENT": "VIIRS S-NPP",
+    "CSV_PATH": null,
     "BUFFER_METERS": {
         "default": 2000,
         "aqua": 30000,
         "fengyun": 30000
     },
     "THUMB_SIZE": 1024,
-    "MAX_IMAGES_PER_POINT": 3,
+    "MAX_IMAGES_PER_POINT": 1,
     "MAX_TIME_DIFF_HOURS": 10,
     "CLOUD_FILTER_PERCENTAGE": 85,
     "OLD_RUN_DIR": null

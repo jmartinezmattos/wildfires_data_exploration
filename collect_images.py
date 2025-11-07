@@ -8,6 +8,7 @@ import datetime
 from datetime import timezone
 from geopy.distance import geodesic
 import shutil
+from download_firms_data import download_firms_data
 
 CONFG_FILE_NAME = "config/collect_images_config.json"
 
@@ -32,11 +33,27 @@ if old_run:
         config = json.load(f)
     OUTPUT_IMG_DIR = old_run
 
-CSV_PATH = config["CSV_PATH"]
+FIRMS_INSTRUMENT = config.get("FIRMS_INSTRUMENT")
+COUNTRY = config.get("COUNTRY")
+
+with open("config/instrument_map.json", "r") as f:
+    insrtument_map = json.load(f)
+
+CSV_PATH = config.get("CSV_PATH", None)
+
+if CSV_PATH is None or CSV_PATH == "" or CSV_PATH.lower() == "null":
+    
+    CSV_PATH = f"data/firms_data/{FIRMS_INSTRUMENT.replace(' ', '_')}/{COUNTRY}/{insrtument_map[FIRMS_INSTRUMENT]}_{COUNTRY.replace(' ', '_')}_merged.csv"
+
+    if not os.path.exists(CSV_PATH):
+        print(f"Archivo CSV de FIRMS no encontrado en {CSV_PATH}. Iniciando descarga...")
+        download_firms_data(COUNTRY, FIRMS_INSTRUMENT)
+
+
 IMAGES_SATELLITE = config["IMAGES_SATELLITE"]
 
 if not old_run:
-    OUTPUT_IMG_DIR = f"{config['OUTPUT_IMG_DIR_BASE']}_{CSV_PATH.split('/')[-1].replace('.csv','')}_{IMAGES_SATELLITE}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    OUTPUT_IMG_DIR = f"data/{CSV_PATH.split('/')[-1].replace('.csv','')}_{IMAGES_SATELLITE}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 THUMB_SIZE = config["THUMB_SIZE"]
 MAX_IMAGES_PER_POINT = config["MAX_IMAGES_PER_POINT"]
@@ -303,7 +320,7 @@ if __name__ == "__main__":
     firms_data = filter_by_satellite_start_date(firms_data, IMAGES_SATELLITE)
 
     if old_run:
-        last_image = pd.read_csv(f'{old_run}/firms_features.csv').iloc[-1]['thumbnail_file'].split('_')[1]
+        last_image = pd.read_csv(f'{old_run}/firms_features.csv').iloc[-1]['thumbnail_file'].split('_')[1].replace('.png','')
         print(f"Siguiendo desde imagen {last_image}...")
         firms_data = firms_data.iloc[int(last_image)+1:]
     else:

@@ -1,0 +1,5 @@
+{
+    "MODIS": "modis",
+    "VIIRS S-NPP": "viirs-snpp",
+    "VIIRS NOAA-20": "viirs-jpss1"
+}
