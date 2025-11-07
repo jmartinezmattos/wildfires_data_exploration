@@ -171,11 +171,12 @@ def process_and_download(image, point, idx, datetime_str, satellite):
 
     print(f"Processing {idx} ({lat}, {lon}) {datetime_str} {satellite}")
 
-    millis = image.get('system:time_start').getInfo()
+    img_info = image.getInfo()
+    millis = img_info['properties'].get('system:time_start', None)
     img_date = datetime.datetime.utcfromtimestamp(millis / 1000).isoformat()
 
     try:
-        cloud_pct = image.get('CLOUDY_PIXEL_PERCENTAGE').getInfo()
+        cloud_pct = img_info['properties'].get('CLOUDY_PIXEL_PERCENTAGE', None)
     except Exception:
         cloud_pct = None
 
