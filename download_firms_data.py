@@ -16,11 +16,8 @@ INSTRUMENT = config.get("INSTRUMENT", "ALL") # Instument options: "MODIS", "VIIR
 if COUNTRY is None:
     raise ValueError("COUNTRY must be specified in the config file.")
 
-instrument_map = {
-    "MODIS": "modis",
-    "VIIRS S-NPP": "viirs-snpp",
-    "VIIRS NOAA-20": "viirs-jpss1"
-}
+with open("config/instrument_map.json", "r") as f:
+    insrtument_map = json.load(f)
 
 start_year_map = {
     "MODIS": 2000,
