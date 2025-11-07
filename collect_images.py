@@ -237,8 +237,7 @@ def get_collection(alert_dt, max_dt, point, satellite="sentinel-2"):
 
     collection = ee.ImageCollection(collection_string).filterBounds(point).filterDate(alert_dt, max_dt)
 
-    collection_size = collection.size().getInfo()
-    if collection_size == 0:
+    if collection.size().eq(0).getInfo():
         return None
 
     if cloud_filter:
