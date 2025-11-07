@@ -6,6 +6,7 @@ import requests
 import datetime
 import pandas as pd
 from tqdm import tqdm
+from pathlib import Path
 from datetime import timezone
 from geopy.distance import geodesic
 
@@ -287,7 +288,7 @@ def process_data(detected_coordinates_df, images_satellite, max_images_per_point
         datetime_str = f"{date_str}T{time_formatted}"
         
         alert_dt = datetime.datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-        min_dt = alert_dt - datetime.timedelta(hours=1)
+        min_dt = alert_dt - datetime.timedelta(hours=MAX_TIME_DIFF_HOURS)
         max_dt = alert_dt + datetime.timedelta(hours=MAX_TIME_DIFF_HOURS)
 
         collection = get_collection(min_dt, max_dt, point, images_satellite)
@@ -333,3 +334,4 @@ if __name__ == "__main__":
 
     print(f"CSV file saved as: {OUTPUT_CSV}")
     print(f"Images saved in: {OUTPUT_IMG_DIR}")
+    Path(OUTPUT_IMG_DIR, "job_completed").touch()
