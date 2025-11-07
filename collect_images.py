@@ -163,7 +163,7 @@ def download_thumbnail(image, filename, point, satellite, bands=['B4','B3','B2']
         print(f"Error downloading {filename}: {e}")
     return False
 
-def process_and_download(image, point, idx, datetime_str, satellite):
+def process_and_download(image, img_info, point, idx, datetime_str, satellite):
 
     coords = point.coordinates().getInfo()
     lon = coords[0]
@@ -171,7 +171,6 @@ def process_and_download(image, point, idx, datetime_str, satellite):
 
     print(f"Processing {idx} ({lat}, {lon}) {datetime_str} {satellite}")
 
-    img_info = image.getInfo()
     millis = img_info['properties'].get('system:time_start', None)
     img_date = datetime.datetime.utcfromtimestamp(millis / 1000).isoformat()
 
@@ -247,7 +246,7 @@ def get_collection(alert_dt, max_dt, point, satellite="sentinel-2"):
 
     return collection
 
-def check_valid_image(image, satellite):
+def check_valid_image(img_info, satellite):
 
     if satellite == "sentinel-2":
         required_bands = ['B8','B4','B3','B12']
@@ -259,13 +258,13 @@ def check_valid_image(image, satellite):
         required_bands = ['Channel0001', 'Channel0002', 'Channel0003']
     else:
         raise ValueError(f"Satélite no soportado: {satellite}")
+    
+    if img_info is None or 'bands' not in img_info:
+        return False
 
-    if image is not None and image.getInfo() is not None:
-            bands = image.bandNames().getInfo()
+    bands = [b['id'] for b in img_info['bands']]
 
-            if not all(b in bands for b in required_bands):
-                return False
-    else:
+    if not all(b in bands for b in required_bands):
         return False
     
     return True
@@ -300,9 +299,10 @@ def process_data(detected_coordinates_df, images_satellite, max_images_per_point
             for i in range(n_images):
                 try:
                     image = ee.Image(images_list.get(i))
-                    if check_valid_image(image, images_satellite):
+                    img_info = image.getInfo()
+                    if check_valid_image(img_info, images_satellite):
                         im_idx = f"{idx}_{i+1}" if n_images > 1 else str(idx)
-                        process_and_download(image, point, im_idx, datetime_str, images_satellite)
+                        process_and_download(image, img_info, point, im_idx, datetime_str, images_satellite)
                 except Exception as e:
                     print(f"Error processing image {i+1} {idx}: {e}")
 
