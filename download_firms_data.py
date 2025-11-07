@@ -82,7 +82,7 @@ def download_firms_data(country, instrument="ALL", end_year=2024):
 
         if dfs:
             df_all = pd.concat(dfs, ignore_index=True)
-            merged_fname = os.path.join(country_output_dir, f"{instr_code}_{country.replace(' ', '_')}_merged.csv")
+            merged_fname = os.path.join(country_output_dir, f"{instr_code}_{country.replace(' ', '_')}.csv")
             df_all.to_csv(merged_fname, index=False)
             print(f"CSV final concatenado guardado en: {merged_fname}")
             print(f"Total archivos: {len(dfs)}, total filas: {len(df_all)}")

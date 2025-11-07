@@ -43,7 +43,7 @@ CSV_PATH = config.get("CSV_PATH", None)
 
 if CSV_PATH is None or CSV_PATH == "" or CSV_PATH.lower() == "null":
     
-    CSV_PATH = f"data/firms_data/{FIRMS_INSTRUMENT.replace(' ', '_')}/{COUNTRY}/{insrtument_map[FIRMS_INSTRUMENT]}_{COUNTRY.replace(' ', '_')}_merged.csv"
+    CSV_PATH = f"data/firms_data/{FIRMS_INSTRUMENT.replace(' ', '_')}/{COUNTRY}/{insrtument_map[FIRMS_INSTRUMENT]}_{COUNTRY.replace(' ', '_')}.csv"
 
     if not os.path.exists(CSV_PATH):
         print(f"Archivo CSV de FIRMS no encontrado en {CSV_PATH}. Iniciando descarga...")
