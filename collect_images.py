@@ -1,13 +1,14 @@
+import os
 import ee
 import json
-import pandas as pd
-from tqdm import tqdm
-import os
+import shutil
 import requests
 import datetime
+import pandas as pd
+from tqdm import tqdm
 from datetime import timezone
 from geopy.distance import geodesic
-import shutil
+
 from download_firms_data import download_firms_data
 
 CONFG_FILE_NAME = "config/collect_images_config.json"
@@ -17,20 +18,22 @@ with open(CONFG_FILE_NAME, "r") as f:
 
 GEE_PROJECT = config.get("GEE_PROJECT")
 
-print(f"Configuración cargada: {config}")
+print(f"Config loaded: {config}")
 
 old_run_dir = config.get("OLD_RUN_DIR", False)
 
 old_run = old_run_dir if old_run_dir and old_run_dir != "False" else False
 
 if old_run_dir and not os.path.exists(old_run_dir):
-    print(f"La carpeta de ejecución anterior {old_run_dir} no existe. Iniciando una nueva ejecución.")
+    print(f"Previous run dir {old_run_dir} not found, starting new run.")
     old_run = False
 
 if old_run:
-    print(f"Cargando configuración de ejecución anterior {old_run}")
+    print(f"Loading previous run {old_run}")
     with open(f"{old_run}/config.json", "r") as f:
         config = json.load(f)
+        print(f"Previous config loaded: {config}")
+
     OUTPUT_IMG_DIR = old_run
 
 FIRMS_INSTRUMENT = config.get("FIRMS_INSTRUMENT")
@@ -46,7 +49,7 @@ if CSV_PATH is None or CSV_PATH == "" or CSV_PATH.lower() == "null":
     CSV_PATH = f"data/firms_data/{FIRMS_INSTRUMENT.replace(' ', '_')}/{COUNTRY}/{insrtument_map[FIRMS_INSTRUMENT]}_{COUNTRY.replace(' ', '_')}.csv"
 
     if not os.path.exists(CSV_PATH):
-        print(f"Archivo CSV de FIRMS no encontrado en {CSV_PATH}. Iniciando descarga...")
+        print(f"FIRMS CSV file not found {CSV_PATH}, downloading...")
         download_firms_data(COUNTRY, FIRMS_INSTRUMENT)
 
 
@@ -77,10 +80,9 @@ def filter_by_satellite_start_date(df: pd.DataFrame, satellite: str) -> pd.DataF
     }
 
     if satellite not in SATELLITE_START_DATES:
-        print(f"No se conoce la fecha mínima operativa para {satellite}. No se filtrará el DataFrame.")
+        print(f"Minumum operative date not found for {satellite}, skipping dataframe filtering.")
         return df.copy()
 
-    # Convertir columna de fechas a datetime
     df_copy = df.copy()
     df_copy['acq_date_dt'] = pd.to_datetime(df_copy['acq_date'], format="%Y-%m-%d", errors='coerce')
 
@@ -88,7 +90,7 @@ def filter_by_satellite_start_date(df: pd.DataFrame, satellite: str) -> pd.DataF
     before_filter = len(df_copy)
     df_filtered = df_copy[df_copy['acq_date_dt'] >= min_date].reset_index(drop=True)
     after_filter = len(df_filtered)
-    print(f"Se eliminaron {before_filter - after_filter} puntos anteriores a {min_date.date()} para {satellite}")
+    print(f"{before_filter - after_filter} points previous to {min_date.date()} deleted")
 
     df_filtered = df_filtered.drop(columns=['acq_date_dt'])
     df_filtered = df_filtered.sort_values(by=['acq_date', 'acq_time'], ascending=[False, False]).reset_index(drop=True)
@@ -96,16 +98,16 @@ def filter_by_satellite_start_date(df: pd.DataFrame, satellite: str) -> pd.DataF
 
 def clean_firms_df(df: pd.DataFrame, exclude_points: list, radius_km: float=3) -> pd.DataFrame:
     """
-    Filtra los puntos del DataFrame eliminando aquellos que estén
-    a menos de `radius_km` de cualquiera de las coordenadas en exclude_points.
+    Filters the DataFrame points by removing those that are within `radius_km`
+    of any coordinates in `exclude_points`.
 
-    Parámetros:
-    - df: pandas.DataFrame con columnas 'latitude' y 'longitude'
-    - exclude_points: lista de tuplas [(lat, lon), ...] a excluir
-    - radius_km: radio de exclusión en kilómetros (default 5)
+    Parameters:
+    - df: pandas.DataFrame with columns 'latitude' and 'longitude'
+    - exclude_points: list of tuples [(lat, lon), ...] to exclude
+    - radius_km: exclusion radius in kilometers (default 5)
 
-    Retorna:
-    - pandas.DataFrame filtrado
+    Returns:
+    - Filtered pandas.DataFrame
     """
     keep_mask = []
     for _, row in df.iterrows():
@@ -114,7 +116,7 @@ def clean_firms_df(df: pd.DataFrame, exclude_points: list, radius_km: float=3) -
         for ex_lat, ex_lon in exclude_points:
             if geodesic((lat, lon), (ex_lat, ex_lon)).km < radius_km:
                 keep = False
-                print(f"Excluyendo punto ({lat}, {lon}) cercano a ({ex_lat}, {ex_lon})")
+                print(f"Excluding point ({lat}, {lon}) near to ({ex_lat}, {ex_lon})")
                 break
         keep_mask.append(keep)
     
@@ -122,7 +124,6 @@ def clean_firms_df(df: pd.DataFrame, exclude_points: list, radius_km: float=3) -
 
     return clean_df
 
-# Función para descargar thumbnail
 def download_thumbnail(image, filename, point, satellite, bands=['B4','B3','B2'], size=THUMB_SIZE):
 
     region = point.buffer(BUFFER_METERS).bounds().getInfo()['coordinates'][0]
@@ -130,7 +131,7 @@ def download_thumbnail(image, filename, point, satellite, bands=['B4','B3','B2']
     if satellite == "landsat-8":
         bands = ['SR_B4', 'SR_B3', 'SR_B2']
         image = image.select(bands).multiply(0.0000275).add(-0.2)
-        vmin, vmax = 0, 0.3  # reflectancia ya escalada
+        vmin, vmax = 0, 0.3
     elif satellite == "sentinel-2":
         bands = ['B4', 'B3', 'B2']
         vmin, vmax = 0, 6000
@@ -141,12 +142,12 @@ def download_thumbnail(image, filename, point, satellite, bands=['B4','B3','B2']
         bands = ['Channel0001','Channel0002','Channel0003']
         vmin, vmax = 0, 4000
     else:
-        raise ValueError(f"Satélite no soportado para miniatura: {satellite}")
+        raise ValueError(f"Satellite not supported: {satellite}")
 
     try:
         thumb_url = image.getThumbURL({
             'dimensions': size, # pixels
-            'region': region, # region geografica
+            'region': region, # geografic region
             'bands': bands,
             'min': vmin,
             'max': vmax,
@@ -157,9 +158,9 @@ def download_thumbnail(image, filename, point, satellite, bands=['B4','B3','B2']
                 f.write(r.content)
             return True
         else:
-            print(f"Error HTTP {r.status_code} al descargar {filename}")
+            print(f"Error HTTP {r.status_code} downloading {filename}")
     except Exception as e:
-        print(f"Error al generar miniatura: {e}")
+        print(f"Error downloading {filename}: {e}")
     return False
 
 def process_and_download(image, point, idx, datetime_str, satellite):
@@ -168,7 +169,7 @@ def process_and_download(image, point, idx, datetime_str, satellite):
     lon = coords[0]
     lat = coords[1]
 
-    print(f"Procesando punto {idx} en ({lat}, {lon}) con imagen del {datetime_str} de {satellite}")
+    print(f"Processing {idx} ({lat}, {lon}) {datetime_str} {satellite}")
 
     millis = image.get('system:time_start').getInfo()
     img_date = datetime.datetime.utcfromtimestamp(millis / 1000).isoformat()
@@ -178,7 +179,6 @@ def process_and_download(image, point, idx, datetime_str, satellite):
     except Exception:
         cloud_pct = None
 
-    # Descargar miniatura
     try:
         img_filename = os.path.join(OUTPUT_IMG_DIR, f"point_{idx}.png")
         download_thumbnail(image, img_filename, point, satellite)
@@ -192,7 +192,7 @@ def process_and_download(image, point, idx, datetime_str, satellite):
         img_date_dt = datetime.datetime.fromisoformat(img_date).replace(tzinfo=timezone.utc)
         date_diff_hours = round((img_date_dt - alert_dt).total_seconds() / 3600, 2)
     else:
-        print(f"Advertencia: img_date es None para punto {idx}")
+        print(f"Warning: img_date is None for point {idx}")
         img_date_dt = None
         date_diff_hours = None
 
@@ -226,13 +226,13 @@ def get_collection(alert_dt, max_dt, point, satellite="sentinel-2"):
         collection_string = "LANDSAT/LC08/C02/T1_L2"
         cloud_filter = ee.Filter.lt('CLOUD_COVER', CLOUD_FILTER_PERCENTAGE)
     elif satellite == "aqua":
-        collection_string = "MODIS/061/MYD09GA"  # MODIS Aqua Surface Reflectance
-        cloud_filter = None  # No hay atributo CLOUDY_PIXEL_PERCENTAGE en este dataset
+        collection_string = "MODIS/061/MYD09GA"
+        cloud_filter = None
     elif satellite == "fengyun":
         collection_string = "CMA/FY4A/AGRI/L1"
-        cloud_filter = None  # No hay metadato de nubes disponible directamente
+        cloud_filter = None
     else:
-        raise ValueError(f"Satélite no soportado: {satellite}")
+        raise ValueError(f"Satellite not supported: {satellite}")
 
     collection = ee.ImageCollection(collection_string).filterBounds(point).filterDate(alert_dt, max_dt)
 
@@ -254,7 +254,7 @@ def check_valid_image(image, satellite):
     elif satellite == "landsat-8":
         required_bands = ['SR_B5', 'SR_B4', 'SR_B3', 'SR_B7']
     elif satellite == "aqua":
-        required_bands = ['sur_refl_b01', 'sur_refl_b02', 'sur_refl_b07']  # bandas visibles/NIR de Aqua
+        required_bands = ['sur_refl_b01', 'sur_refl_b02', 'sur_refl_b07']
     elif satellite == "fengyun":
         required_bands = ['Channel0001', 'Channel0002', 'Channel0003']
     else:
@@ -304,7 +304,7 @@ def process_data(detected_coordinates_df, images_satellite, max_images_per_point
                         im_idx = f"{idx}_{i+1}" if n_images > 1 else str(idx)
                         process_and_download(image, point, im_idx, datetime_str, images_satellite)
                 except Exception as e:
-                    print(f"Error procesando imagen {i+1} para punto {idx}: {e}")
+                    print(f"Error processing image {i+1} {idx}: {e}")
 
 
 if __name__ == "__main__":
@@ -313,23 +313,23 @@ if __name__ == "__main__":
 
     os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
 
-    print("Iniciando procesamiento de datos...")
-    print(f"Archivo de detecciones de entrada: {CSV_PATH}")
+    print("Starting image collection...")
+    print(f"Input FIRMS dataset: {CSV_PATH}")
 
     firms_data = pd.read_csv(CSV_PATH)
     firms_data = filter_by_satellite_start_date(firms_data, IMAGES_SATELLITE)
 
     if old_run:
         last_image = pd.read_csv(f'{old_run}/firms_features.csv').iloc[-1]['thumbnail_file'].split('_')[1].replace('.png','')
-        print(f"Siguiendo desde imagen {last_image}...")
+        print(f"Resuming from image {last_image}...")
         firms_data = firms_data.iloc[int(last_image)+1:]
     else:
         config_dest_path = os.path.join(OUTPUT_IMG_DIR, "config.json")
         shutil.copy(CONFG_FILE_NAME, config_dest_path)
 
-    print(f"{len(firms_data)} puntos cargados desde {CSV_PATH}")
+    print(f"{len(firms_data)} points loaded from {CSV_PATH}")
 
     process_data(firms_data, IMAGES_SATELLITE, MAX_IMAGES_PER_POINT)
 
-    print(f"Archivo CSV guardado en: {OUTPUT_CSV}")
-    print(f"Miniaturas guardadas en: {OUTPUT_IMG_DIR}")
+    print(f"CSV file saved as: {OUTPUT_CSV}")
+    print(f"Images saved in: {OUTPUT_IMG_DIR}")

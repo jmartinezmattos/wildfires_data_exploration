@@ -39,7 +39,7 @@ def download_yearly_csv(country_name, year, instr_code, save_dir):
         print(f"Saving: {outpath}")
         return True
     else:
-        print(f"No encontrado o error para {url} (status {r.status_code})")
+        print(f"URL not found: {url} (status {r.status_code})")
         return False
 
 def download_firms_data(country, instrument="ALL", end_year=2024):
@@ -62,10 +62,10 @@ def download_firms_data(country, instrument="ALL", end_year=2024):
 
         for year in range(start_year, end_year + 1):
             download_yearly_csv(country, year, instr_code, country_output_dir)
-            sleep(0.5)  # opcional, para no saturar servidor
+            sleep(0.5)  # to avoid overwhelming the server
 
     for instrument in instruments:
-        # Concatenar todos los CSV descargados para el instrumento
+        # Concatenate yearly CSVs
         instr_code = instrument_map[instrument]
 
         base_output_dir = f"data/firms_data/{instrument.replace(' ', '_')}"
@@ -84,10 +84,10 @@ def download_firms_data(country, instrument="ALL", end_year=2024):
             df_all = pd.concat(dfs, ignore_index=True)
             merged_fname = os.path.join(country_output_dir, f"{instr_code}_{country.replace(' ', '_')}.csv")
             df_all.to_csv(merged_fname, index=False)
-            print(f"CSV final concatenado guardado en: {merged_fname}")
-            print(f"Total archivos: {len(dfs)}, total filas: {len(df_all)}")
+            print(f"CSV saved in: {merged_fname}")
+            print(f"All files: {len(dfs)}, total rows: {len(df_all)}")
         else:
-            print("No se encontraron archivos válidos para concatenar.")
+            print("No valid files found to concatenate.")
 
 if __name__ == "__main__":
 
