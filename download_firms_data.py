@@ -17,7 +17,7 @@ if COUNTRY is None:
     raise ValueError("COUNTRY must be specified in the config file.")
 
 with open("config/instrument_map.json", "r") as f:
-    insrtument_map = json.load(f)
+    instrument_map = json.load(f)
 
 start_year_map = {
     "MODIS": 2000,
