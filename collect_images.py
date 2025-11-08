@@ -99,6 +99,44 @@ def filter_by_satellite_start_date(df: pd.DataFrame, satellite: str) -> pd.DataF
     df_filtered = df_filtered.sort_values(by=['acq_date', 'acq_time'], ascending=[False, False]).reset_index(drop=True)
     return df_filtered
 
+def filter_by_confidence(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filters the dataset by minimum confidence value.
+    Works with both numerical (MODIS-style) and alphabetical (VIIRS-style) confidence fields.
+    """
+
+    confidence_map = {"l": 1, "n": 2, "h": 3}
+    df_copy = df.copy()
+
+    # Normalize all to lowercase strings
+    df_copy["confidence_str"] = df_copy["confidence"].astype(str).str.lower().str.strip()
+
+    # Detect if the confidence field is numeric or alphabetical
+    sample_value = df_copy["confidence_str"].dropna().iloc[0] if not df_copy["confidence_str"].dropna().empty else None
+    is_numeric = sample_value.isdigit() if sample_value else False
+
+    if is_numeric:
+        # Numeric confidence → use MODIS threshold
+        min_conf = config.get("MIN_CONFIDENCE_MODIS", 10)
+        df_copy["confidence_num"] = pd.to_numeric(df_copy["confidence_str"], errors="coerce")
+        before = len(df_copy)
+        df_filtered = df_copy[df_copy["confidence_num"] >= min_conf]
+        after = len(df_filtered)
+        print(f"{before - after} points below numeric confidence {min_conf} deleted")
+        df_filtered = df_filtered.drop(columns=["confidence_str", "confidence_num"])
+    else:
+        # Alphabetical confidence → use VIIRS threshold
+        min_conf_letter = config.get("MIN_CONFIDENCE_VIIRS", "l").lower()
+        min_conf_value = confidence_map.get(min_conf_letter, 1)
+        df_copy["confidence_val"] = df_copy["confidence_str"].map(confidence_map)
+        before = len(df_copy)
+        df_filtered = df_copy[df_copy["confidence_val"] >= min_conf_value]
+        after = len(df_filtered)
+        print(f"{before - after} points below confidence '{min_conf_letter}' deleted")
+        df_filtered = df_filtered.drop(columns=["confidence_str", "confidence_val"])
+
+    return df_filtered
+
 def clean_firms_df(df: pd.DataFrame, exclude_points: list, radius_km: float=3) -> pd.DataFrame:
     """
     Filters the DataFrame points by removing those that are within `radius_km`
@@ -339,6 +377,7 @@ if __name__ == "__main__":
 
     firms_data = pd.read_csv(CSV_PATH)
     firms_data = filter_by_satellite_start_date(firms_data, IMAGES_SATELLITE)
+    firms_data = filter_by_confidence(firms_data)
 
     if old_run:
         last_image = pd.read_csv(f'{old_run}/firms_features.csv').iloc[-1]['thumbnail_file'].split('_')[1].replace('.png','')
