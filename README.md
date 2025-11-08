@@ -8,6 +8,8 @@ This project automates the retrieval and visualization of satellite imagery corr
    ```bash
    python -m venv venv
    source venv/bin/activate   # On Linux/Mac
+   
+   venv\Scripts\Activate.ps1  # On Windows powershell
    venv\Scripts\activate      # On Windows
    ```
 
