@@ -13,5 +13,6 @@
     "MAX_IMAGES_PER_POINT": 1,
     "MAX_TIME_DIFF_HOURS": 10,
     "CLOUD_FILTER_PERCENTAGE": 85,
-    "OLD_RUN_DIR": null
+    "OLD_RUN_DIR": null,
+    "NUM_THREADS": 10
 }

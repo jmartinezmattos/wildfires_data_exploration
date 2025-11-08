@@ -7,6 +7,7 @@ import datetime
 import pandas as pd
 from tqdm import tqdm
 from pathlib import Path
+import concurrent.futures
 from datetime import timezone
 from geopy.distance import geodesic
 
@@ -53,6 +54,7 @@ if CSV_PATH is None or CSV_PATH == "" or CSV_PATH.lower() == "null":
         print(f"FIRMS CSV file not found {CSV_PATH}, downloading...")
         download_firms_data(COUNTRY, FIRMS_INSTRUMENT)
 
+NUM_THREADS = config.get("NUM_THREADS", 4)
 
 IMAGES_SATELLITE = config["IMAGES_SATELLITE"]
 
@@ -270,42 +272,59 @@ def check_valid_image(img_info, satellite):
     
     return True
         
-def process_data(detected_coordinates_df, images_satellite, max_images_per_point):
-    
+def process_single_point(idx, row, images_satellite, max_images_per_point):
+    lat, lon = row['latitude'], row['longitude']
+
+    date_str = row['acq_date']
+    time_str = str(row['acq_time']).zfill(4)
+
+    point = ee.Geometry.Point(lon, lat)
+    time_formatted = f"{time_str[:2]}:{time_str[2:]}:00"
+    datetime_str = f"{date_str}T{time_formatted}"
+
+    alert_dt = datetime.datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+    min_dt = alert_dt - datetime.timedelta(hours=MAX_TIME_DIFF_HOURS)
+    max_dt = alert_dt + datetime.timedelta(hours=MAX_TIME_DIFF_HOURS)
+
+    try:
+        collection = get_collection(min_dt, max_dt, point, images_satellite)
+
+        if collection is None:
+            return
+
+        images_list = collection.toList(max_images_per_point)
+        n_images = min(images_list.size().getInfo(), max_images_per_point)
+
+        for i in range(n_images):
+            try:
+                image = ee.Image(images_list.get(i))
+                img_info = image.getInfo()
+                if check_valid_image(img_info, images_satellite):
+                    im_idx = f"{idx}_{i+1}" if n_images > 1 else str(idx)
+                    process_and_download(image, img_info, point, im_idx, datetime_str, images_satellite)
+            except Exception as e:
+                print(f"Error processing image {i+1} for point {idx}: {e}")
+
+    except Exception as e:
+        print(f"Error processing point {idx}: {e}")
+
+
+def process_data(detected_coordinates_df, images_satellite, max_images_per_point, num_threads=NUM_THREADS):
     if not os.path.exists(OUTPUT_CSV):
         with open(OUTPUT_CSV, 'w', newline='', encoding='utf-8') as f:
             pd.DataFrame(columns=COLUMNS).to_csv(f, index=False)
 
-    for idx, row in tqdm(detected_coordinates_df.iterrows(), total=len(detected_coordinates_df)):
-        lat, lon = row['latitude'], row['longitude']
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        list(
+            tqdm(
+                executor.map(
+                    lambda args: process_single_point(*args),
+                    [(idx, row, images_satellite, max_images_per_point) for idx, row in detected_coordinates_df.iterrows()]
+                ),
+                total=len(detected_coordinates_df),
+            )
+        )
 
-        date_str = row['acq_date']
-        time_str = str(row['acq_time']).zfill(4) 
-        
-        point = ee.Geometry.Point(lon, lat)
-        
-        time_formatted = f"{time_str[:2]}:{time_str[2:]}:00"
-        datetime_str = f"{date_str}T{time_formatted}"
-        
-        alert_dt = datetime.datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-        min_dt = alert_dt - datetime.timedelta(hours=MAX_TIME_DIFF_HOURS)
-        max_dt = alert_dt + datetime.timedelta(hours=MAX_TIME_DIFF_HOURS)
-
-        collection = get_collection(min_dt, max_dt, point, images_satellite)
-
-        if collection is not None:
-            images_list = collection.toList(max_images_per_point)
-            n_images = min(images_list.size().getInfo(), max_images_per_point)
-
-            for i in range(n_images):
-                try:
-                    image = ee.Image(images_list.get(i))
-                    img_info = image.getInfo()
-                    if check_valid_image(img_info, images_satellite):
-                        im_idx = f"{idx}_{i+1}" if n_images > 1 else str(idx)
-                        process_and_download(image, img_info, point, im_idx, datetime_str, images_satellite)
-                except Exception as e:
-                    print(f"Error processing image {i+1} {idx}: {e}")
 
 
 if __name__ == "__main__":
@@ -314,6 +333,7 @@ if __name__ == "__main__":
 
     os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
 
+    print(f"Number of threads: {NUM_THREADS}")
     print("Starting image collection...")
     print(f"Input FIRMS dataset: {CSV_PATH}")
 
