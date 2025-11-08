@@ -271,13 +271,41 @@ def check_valid_image(img_info, satellite):
         return False
     
     return True
-        
+
+
+def enough_viirs_conf(confidence, threshold_confidence):
+    confidence_map = {
+        "l": 1,  # Low
+        "n": 2,  # Nominal
+        "h": 3  # High
+    }
+    return confidence_map.get(confidence) >= confidence_map.get(threshold_confidence)
+
+
 def process_single_point(idx, row, images_satellite, max_images_per_point):
     lat, lon = row['latitude'], row['longitude']
 
     date_str = row['acq_date']
     time_str = str(row['acq_time']).zfill(4)
 
+    # Check if confidence is enough
+
+    current_confidence = row.get('confidence')
+    if current_confidence is None:
+        return
+    print(f"CONFIDENCE IS {current_confidence}")
+    if type(current_confidence) is int:
+        threshold_confidence = config.get("MIN_CONFIDENCE_MODIS")
+        if int(current_confidence) < threshold_confidence:
+            print(f"CONFIDENCE {current_confidence} rejected limit {threshold_confidence}")
+            return
+    else:
+        threshold_confidence = config.get("MIN_CONFIDENCE_VIIRS")
+        if not enough_viirs_conf(current_confidence, threshold_confidence):
+            print(f"CONFIDENCE {current_confidence} rejected limit {threshold_confidence}")
+        return
+
+    # Enough confidence, continue with request
     point = ee.Geometry.Point(lon, lat)
     time_formatted = f"{time_str[:2]}:{time_str[2:]}:00"
     datetime_str = f"{date_str}T{time_formatted}"
