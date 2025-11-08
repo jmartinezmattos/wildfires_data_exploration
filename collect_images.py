@@ -293,17 +293,14 @@ def process_single_point(idx, row, images_satellite, max_images_per_point):
     current_confidence = row.get('confidence')
     if current_confidence is None:
         return
-    print(f"CONFIDENCE IS {current_confidence}")
     if type(current_confidence) is int:
         threshold_confidence = config.get("MIN_CONFIDENCE_MODIS")
         if int(current_confidence) < threshold_confidence:
-            print(f"CONFIDENCE {current_confidence} rejected limit {threshold_confidence}")
             return
     else:
         threshold_confidence = config.get("MIN_CONFIDENCE_VIIRS")
         if not enough_viirs_conf(current_confidence, threshold_confidence):
-            print(f"CONFIDENCE {current_confidence} rejected limit {threshold_confidence}")
-        return
+            return
 
     # Enough confidence, continue with request
     point = ee.Geometry.Point(lon, lat)
