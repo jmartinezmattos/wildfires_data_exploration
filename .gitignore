@@ -7,4 +7,4 @@ checkpoints
 logs
 config/collect_images_config.json
 config/download_firms_csv_config.json
-config\collect_no_fire_images_config.json
+config/collect_no_fire_images_config.json
