@@ -261,7 +261,7 @@ def get_hourly_fire_counts(df, output_dir):
 
     return hourly_counts
 
-def get_metrics(df):
+def get_metrics(df): # TODO create each metric also for unique fire df
     countries = df['country'].value_counts()
     print(countries)
 
@@ -273,12 +273,14 @@ def get_metrics(df):
     cloud_pct_std = round(df['cloud_pct'].std(), 3)
     print(cloud_pct_mean, cloud_pct_std)
 
+    images_count = len(df)
     df_with_ids = assign_fire_ids(df, max_km=3)
     unique_wildfires = df_with_ids["fire_id"].nunique()
     df_with_ids.to_csv(os.path.join(OUTPUT_DIR, "firms_with_fire_id.csv"), index=False)
 
 
     metrics = {
+        "images_count": images_count,
         "cloud_pct_mean": cloud_pct_mean,
         "cloud_pct_std": cloud_pct_std,
         "unique_wildfires": unique_wildfires
@@ -290,8 +292,8 @@ def get_metrics(df):
 
     metrics_df.to_csv(os.path.join(OUTPUT_DIR, "metrics.csv"), index=False)
 
-
-    save_world_fire_map(df, OUTPUT_DIR)
+    unique_fires_df = df_with_ids.drop_duplicates(subset="fire_id")
+    save_world_fire_map(unique_fires_df, OUTPUT_DIR)
     save_cloud_pct_histogram(df, OUTPUT_DIR)
     save_country_bar_chart(df, OUTPUT_DIR)
     get_monthly_fire_counts(df, OUTPUT_DIR)
