@@ -262,11 +262,26 @@ def get_hourly_fire_counts(df, output_dir):
     return hourly_counts
 
 def get_metrics(df): # TODO create each metric also for unique fire df
-    countries = df['country'].value_counts()
-    print(countries)
+    
+    df_with_ids = assign_fire_ids(df, max_km=3)
+    unique_wildfires = df_with_ids["fire_id"].nunique()
+    df_with_ids.to_csv(os.path.join(OUTPUT_DIR, "firms_with_fire_id.csv"), index=False)
+    unique_fires_df = df_with_ids.drop_duplicates(subset="fire_id")
 
-    country_counts = df['country'].value_counts().reset_index()
-    country_counts.columns = ['country', 'count']
+    country_counts_total = df['country'].value_counts().reset_index()
+    country_counts_total.columns = ['country', 'count_total']
+
+    country_counts_unique = unique_fires_df['country'].value_counts().reset_index()
+    country_counts_unique.columns = ['country', 'count_unique']
+
+    country_counts = pd.merge(country_counts_total, country_counts_unique, on='country', how='outer').fillna(0)
+    country_counts['count_total'] = country_counts['count_total'].astype(int)
+    country_counts['count_unique'] = country_counts['count_unique'].astype(int)
+
+    country_counts['percentage_total'] = round(100 * country_counts['count_total'] / country_counts['count_total'].sum(), 2)
+    country_counts['percentage_unique'] = round(100 * country_counts['count_unique'] / country_counts['count_unique'].sum(), 2)
+    country_counts['unique_over_total'] = round(100 * country_counts['count_unique'] / country_counts['count_total'], 2)
+
     country_counts.to_csv(os.path.join(OUTPUT_DIR, "country_counts.csv"), index=False)
 
     cloud_pct_mean = round(df['cloud_pct'].mean(), 3)
@@ -274,10 +289,6 @@ def get_metrics(df): # TODO create each metric also for unique fire df
     print(cloud_pct_mean, cloud_pct_std)
 
     images_count = len(df)
-    df_with_ids = assign_fire_ids(df, max_km=3)
-    unique_wildfires = df_with_ids["fire_id"].nunique()
-    df_with_ids.to_csv(os.path.join(OUTPUT_DIR, "firms_with_fire_id.csv"), index=False)
-
 
     metrics = {
         "images_count": images_count,
@@ -292,7 +303,6 @@ def get_metrics(df): # TODO create each metric also for unique fire df
 
     metrics_df.to_csv(os.path.join(OUTPUT_DIR, "metrics.csv"), index=False)
 
-    unique_fires_df = df_with_ids.drop_duplicates(subset="fire_id")
     save_world_fire_map(unique_fires_df, OUTPUT_DIR)
     save_cloud_pct_histogram(df, OUTPUT_DIR)
     save_country_bar_chart(df, OUTPUT_DIR)
