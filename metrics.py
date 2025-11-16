@@ -4,9 +4,95 @@ import numpy as np
 import datetime
 import os
 import matplotlib.pyplot as plt
+import geopandas as gpd
+import requests
+import zipfile
+import io
 
 OUTPUT_DIR = f"data/metrics/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+def load_world_map():
+    """
+    Downloads Natural Earth '110m admin 0 countries' if not present,
+    extracts it into data/world/, and loads it as a GeoDataFrame.
+    """
+
+    world_dir = "data/world"
+    shapefile_path = os.path.join(world_dir, "ne_110m_admin_0_countries.shp")
+
+    if not os.path.exists(shapefile_path):
+        print("Downloading Natural Earth world map...")
+
+        os.makedirs(world_dir, exist_ok=True)
+
+        # ✅ This is the correct working URL from Natural Earth CDN
+        url = "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
+
+        r = requests.get(url)
+
+        # Check if response is ZIP
+        if r.status_code != 200 or r.content[:2] != b'PK':
+            raise ValueError("Download failed, file is not a valid ZIP. URL may be down.")
+
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        z.extractall(world_dir)
+
+        print("World map downloaded and extracted successfully.")
+
+    return gpd.read_file(shapefile_path)
+
+
+def save_world_fire_map(df, output_dir):
+    """
+    Creates and saves a world map with fire locations as red points.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    world = load_world_map()
+
+    fire_points = gpd.GeoDataFrame(
+        df,
+        geometry=gpd.points_from_xy(df.longitude, df.latitude),
+        crs="EPSG:4326"
+    )
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+    world.plot(ax=ax, color="lightgray", edgecolor="black")
+    fire_points.plot(ax=ax, markersize=4, color="red", alpha=0.6)
+
+    plt.title("Global Fire Locations")
+    output_path = os.path.join(output_dir, "world_fire_map.png")
+
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"World fire map saved to: {output_path}")
+    """
+    Creates and saves a world map with fire locations as red points.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Load world map
+    world = load_world_map()
+
+    # Create GeoDataFrame from fire points
+    fire_points = gpd.GeoDataFrame(
+        df,
+        geometry=gpd.points_from_xy(df.longitude, df.latitude),
+        crs="EPSG:4326"
+    )
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(12, 8))
+    world.plot(ax=ax, color="lightgray", edgecolor="black")
+    fire_points.plot(ax=ax, markersize=5, color="red", alpha=0.6)
+
+    plt.title("Global Fire Locations")
+    output_path = os.path.join(output_dir, "world_fire_map.png")
+
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"World fire map saved to: {output_path}")
 
 def assign_fire_ids(df, max_km=3):
     df = df.copy()
@@ -205,13 +291,11 @@ def get_metrics(df):
     metrics_df.to_csv(os.path.join(OUTPUT_DIR, "metrics.csv"), index=False)
 
 
-
+    save_world_fire_map(df, OUTPUT_DIR)
     save_cloud_pct_histogram(df, OUTPUT_DIR)
     save_country_bar_chart(df, OUTPUT_DIR)
     get_monthly_fire_counts(df, OUTPUT_DIR)
     get_hourly_fire_counts(df, OUTPUT_DIR)
-
-
 
 if __name__ == "__main__":
     df = pd.read_csv("data/fire/firms_features_merged.csv")
