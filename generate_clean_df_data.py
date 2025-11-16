@@ -12,8 +12,8 @@ def generate_actualized_df(input_dir):
 
     filtered_df = df[df['thumbnail_file'].isin(png_files)].copy()
 
-    filtered_df["country"] = filtered_df["detecion_source"].apply(lambda x: x.split("_")[-1])
     filtered_df["firms_sensor"] = filtered_df["detecion_source"].apply(lambda x: x.split("_")[0])
+    filtered_df["country"] = filtered_df["detecion_source"].apply(lambda x: "_".join(x.split("_")[1:]))
 
     filtered_csv_path = os.path.join(input_dir, csv_name.replace('.csv', '_filtered.csv'))
     filtered_df.to_csv(filtered_csv_path, index=False, encoding='utf-8')
