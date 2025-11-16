@@ -1,0 +1,8 @@
+{   
+    "GEE_PROJECT": "cellular-retina-276416",
+    "IMAGES_SATELLITE": "sentinel-2",
+    "BUFFER_METERS": 2000,
+    "THUMB_SIZE": 1024,
+    "CLOUD_FILTER_PERCENTAGE": 85,
+    "NUM_THREADS": 5
+}
