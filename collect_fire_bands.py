@@ -1,97 +1,139 @@
+# =======================
+# CHANGES SUMMARY
+# =======================
+# 1. Disable EE concurrency: NUM_THREADS = 1
+# 2. Remove ALL task polling / wait_for_task_slot / count_active_tasks
+# 3. Add a global EE semaphore to protect EE calls
+# 4. Add small jittered sleep before task.start()
+# =======================
+
 import os
 import json
 import datetime
 import concurrent.futures
 import time
 import argparse
+import random
+import threading
+from google.cloud import storage
 
 import ee
 import pandas as pd
 from tqdm import tqdm
 
 
+PROGRESS_PATH = "progress.json"
+progress_lock = threading.Lock()
+
+storage_client = storage.Client()
+bucket = storage_client.bucket("fire_model_dataset")
+
+def file_exists(path):
+    blob = bucket.blob(path)
+    print(f"File {path} exists: {blob.exists()}")
+    return blob.exists()
+
+
+def load_last_row():
+    if not os.path.exists(PROGRESS_PATH):
+        return 0
+    with open(PROGRESS_PATH, "r") as f:
+        data = json.load(f)
+    return data.get("last_row", 0)
+
+
+def save_last_row(idx):
+    with progress_lock:
+        with open(PROGRESS_PATH, "w") as f:
+            json.dump({"last_row": idx}, f)
+
+
+
+# -----------------------
 # Config
+# -----------------------
 CONFIG_PATH = "config/collect_images_config.json"
 CSV_PATH = "data/fire/firms_features_merged.csv"
-NUM_THREADS = 100
-MAX_ACTIVE_TASKS = 2500
-POLL_SECONDS = 15
 
-# Optional: reuse GEE project from config
-GEE_PROJECT = None
+NUM_THREADS = 1  # 🔥 IMPORTANT: EE-safe
+MAX_PENDING_TASKS = 500
+POLL_SECONDS = 20
+
 if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, "r") as f:
         config = json.load(f)
     GEE_PROJECT = config.get("GEE_PROJECT")
-    NUM_THREADS = config.get("NUM_THREADS", NUM_THREADS)
 
-# Placeholder: set the band(s) you want to extract
 BANDS_TO_EXTRACT = [
-    "B1"
-    "B2",
-    "B3",
-    "B4",
-    "B5",
-    "B6",
-    "B7",
-    "B8",
-    "B8A",
-    "B9",
-    "B10"
-    "B11",
-    "B12",
-] 
+    "B1", "B2", "B3", "B4", "B5", "B6",
+    "B7", "B8", "B8A", "B9", "B11", "B12",
+]
 
-# Placeholder: implement how to export or download the band(s)
+# Global EE rate limiter
+ee_semaphore = threading.Semaphore(1)
+pending_tasks = []
+pending_lock = threading.Lock()
+
+
+# -----------------------
+# Export
+# -----------------------
+def _prune_finished_tasks():
+    active_states = {"READY", "RUNNING"}
+    still_pending = []
+    for task in pending_tasks:
+        try:
+            state = task.status().get("state")
+            if state in active_states:
+                still_pending.append(task)
+        except Exception:
+            # If status fails, keep task to be safe
+            still_pending.append(task)
+    return still_pending
+
+
+def wait_for_pending_slot(max_pending: int, poll_seconds: int):
+    while True:
+        with pending_lock:
+            current_pending = len(pending_tasks)
+            if current_pending < max_pending:
+                return
+        print(f"Pending tasks: {current_pending}. Waiting for a slot...", flush=True)
+        #time.sleep(poll_seconds)
+        with pending_lock:
+            updated = _prune_finished_tasks()# already takes long, no sleep needed
+            pending_tasks.clear()
+            pending_tasks.extend(updated)
+
 
 def download_band_placeholder(image, out_path, region):
-    """
-    Placeholder for band extraction. Replace this with your actual
-    export/download logic (e.g., getDownloadURL or Export.image).
-    """
-    wait_for_task_slot(MAX_ACTIVE_TASKS, POLL_SECONDS)
-    task = ee.batch.Export.image.toCloudStorage(
-    image=image,
-    bucket="fire_model_dataset",
-    fileNamePrefix=out_path,
-    region=region,
-    crs="EPSG:4326",
-    fileFormat="GeoTIFF",
-    formatOptions={'cloudOptimized': True},
-    maxPixels=1e13
-    )
+    with ee_semaphore:
+        proj = image.select("B2").projection()
+        region_utm = region.transform(proj, 1)
 
-    print(f"Starting export to {out_path}", flush=True)
-    task.start()
+        task = ee.batch.Export.image.toCloudStorage(
+            image=image.clip(region_utm),
+            bucket="fire_model_dataset",
+            fileNamePrefix=out_path,
+            region=region_utm,
+            crs=proj.crs(),
+            scale=10,
+            fileFormat="GeoTIFF",
+            formatOptions={"cloudOptimized": True},
+            maxPixels=1e13,
+        )
 
+        task.start()
+        time.sleep(1.2 + random.random() * 0.6)
 
-def count_active_tasks():
-    active_states = {"READY", "RUNNING"}
-    active = 0
-    for task in ee.batch.Task.list():
-        try:
-            if task.status().get("state") in active_states:
-                active += 1
-        except Exception:
-            continue
-    return active
+        #with pending_lock:
+            #pending_tasks.append(task)
 
 
-def wait_for_task_slot(max_active, poll_seconds):
-    while True:
-        active = count_active_tasks()
-        if active < max_active:
-            return
-        print(f"Active tasks {active} >= limit {max_active}. Waiting {poll_seconds}s...", flush=True)
-        time.sleep(poll_seconds)
-
-
+# -----------------------
+# Sentinel-2 fetch
+# -----------------------
 def get_s2_image(point, image_date):
-    """
-    Find the S2_SR_HARMONIZED image for the given point and image_date.
-    Uses a 1-day window around the image_date.
-    """
-    # image_date in ISO format: 2025-11-08T16:17:37
     dt = datetime.datetime.fromisoformat(image_date.replace("Z", ""))
     start = dt - datetime.timedelta(hours=12)
     end = dt + datetime.timedelta(hours=12)
@@ -104,12 +146,15 @@ def get_s2_image(point, image_date):
         .sort("system:time_start")
     )
 
-    if collection.size().eq(0).getInfo():
-        return None
+    # Just take first image without checking size
+    image = ee.Image(collection.first())
 
-    return ee.Image(collection.first())
+    return image
 
 
+# -----------------------
+# Row processing
+# -----------------------
 def process_row(idx, row, split_sets):
     lat = row["latitude"]
     lon = row["longitude"]
@@ -119,47 +164,56 @@ def process_row(idx, row, split_sets):
     if country.lower() in ["uruguay", "new_zealand", "ireland", "france", "finland", "cuba"]:
         country = f"modis_{country}"
 
-    if pd.isna(image_date):
-        return
-
-    point = ee.Geometry.Point(lon, lat)
-    region = point.buffer(2000)
-    image = get_s2_image(point, image_date)
-
-    if image is None:
-        print(f"No image found for index {idx}")
-        return
-
+    # Check where it should go
     base_name = f"fire_{country}_{point_num}.png"
     split_prefix = None
     for split_name, name_set in split_sets.items():
         if base_name in name_set:
             split_prefix = split_name
             break
-
+    
     if split_prefix is None:
         print(f"File name not found in split lists: {base_name}")
         return
 
     out_path = f"{split_prefix}/Fire/{country}_{point_num}"
+    gcs_path = f"{out_path}.tif"
 
-    try:
-        download_band_placeholder(image, out_path, region)
-    except NotImplementedError:
-        # Keep the placeholder without failing the whole run
-        pass
+    # Check if is already in the bucket
+    if file_exists(gcs_path):
+        save_last_row(idx)  # Save progress even if skipping
+        print(f"File exists, skipping index {idx}.")
+        return
 
+    print(f"Processing index {idx}: {base_name}")
+    if pd.isna(image_date):
+        return
 
+    point = ee.Geometry.Point(lon, lat)
+    region = point.buffer(2000)
+
+    image = get_s2_image(point, image_date)
+    if image is None:
+        return
+
+    download_band_placeholder(image, out_path, region)
+
+      # Save progress AFTER successful submission
+
+# -----------------------
+# Main
+# -----------------------
 def main(start_line: int = 0):
     ee.Initialize(project=GEE_PROJECT)
 
-    if start_line < 0:
-        raise ValueError("start_line must be >= 0")
+    df = pd.read_csv(CSV_PATH)
 
-    if start_line >= 1:
-        df = pd.read_csv(CSV_PATH)
-    else:
-        df = pd.read_csv(CSV_PATH, skiprows=range(1, start_line))
+    if start_line == 0:
+        start_line = load_last_row()
+        print(f"Resuming from row {start_line}")
+
+    if start_line > 0:
+        df = df.iloc[start_line:]
 
     split_sets = {
         "train": set(pd.read_csv("file_names/train_Fire.csv")["filename"]),
@@ -180,12 +234,7 @@ def main(start_line: int = 0):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Collect fire bands from CSV.")
-    parser.add_argument(
-        "--start-line",
-        type=int,
-        default=0,
-        help="Data row number to start reading from (1-based). Use 0 or 1 for the first data row.",
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--start-line", type=int, default=0)
     args = parser.parse_args()
-    main(start_line=args.start_line)
+    main(args.start_line)
