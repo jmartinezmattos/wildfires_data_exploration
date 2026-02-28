@@ -22,25 +22,19 @@ import ee
 import pandas as pd
 from tqdm import tqdm
 
-
 MISSING_SPLIT_PATH = "missing_split_prefix.txt"
-GCS_FILES_FILE = "file_names_combined.csv"
+PROGRESS_PATH = "progress.json"
+TASKS_PATH = "tasks.txt"
+progress_lock = threading.Lock()
+counting_lock = threading.Lock()
+missing_split_lock = threading.Lock()
 BUCKET = "fire_dataset_2"
 
-PROGRESS_PATH = "progress.json"
-BASE_NAMES_PATH = "already_in_bucket.txt"
-BUCKET_MISSING_PATH = "bucket_missing_files.txt"
-missing_split_lock = threading.Lock()
-progress_lock = threading.Lock()
-bucket_lock = threading.Lock()
-base_lock = threading.Lock()
-counting_lock = threading.Lock()
 storage_client = storage.Client()
 bucket = storage_client.bucket(BUCKET)
-
 IMAGES_SUBMITTED = 0
 
-def file_exists(path):# fixme CAMBIAR DESPUÉS A QUE NO USE BUCKET
+def file_exists(path):
     blob = bucket.blob(path)
     print(f"File {path} exists: {blob.exists()}")
     return blob.exists()
@@ -60,13 +54,21 @@ def save_last_row(idx):
             json.dump({"last_row": idx}, f)
 
 
+def random_past_date_from_row(row_date_str):
+    base_date = datetime.datetime.fromisoformat(row_date_str)
+    months_back = random.randint(1, 13)
+    days_back = random.randint(0, 30)
+    return base_date - datetime.timedelta(days=30*months_back +5*days_back)#para que sea todo multiplo de 5
+
 # -----------------------
 # Config
 # -----------------------
-CONFIG_PATH = "config/collect_images_config.json"
-CSV_PATH = "data/fire/firms_features_merged_last.csv"
+CONFIG_PATH = "collect_images_config.json"
+CSV_PATH = "firms_features_merged_last.csv"
+BUCKET_MISSING_PATH = "missing_in_bucket_no_fire.txt"
+BASE_PATH = "all_no_fire_in_bucket.txt"
 
-NUM_THREADS = 6  # 🔥 IMPORTANT: EE-safe
+NUM_THREADS = 8  # 🔥 IMPORTANT: EE-safe
 MAX_PENDING_TASKS = 500
 POLL_SECONDS = 20
 
@@ -76,16 +78,47 @@ if os.path.exists(CONFIG_PATH):
     GEE_PROJECT = config.get("GEE_PROJECT")
 
 BANDS_TO_EXTRACT = [
-    "B2", "B3", "B4", "B8", "B11", "B12",
+    "B2", "B3", "B4","B8", "B11", "B12",
 ]
 
 # Global EE rate limiter
 ee_semaphore = threading.Semaphore(1)
-
+pending_tasks = []
+pending_lock = threading.Lock()
+bucket_lock = threading.Lock()
+names_lock = threading.Lock()
+task_lock = threading.Lock()
 
 # -----------------------
 # Export
 # -----------------------
+def _prune_finished_tasks():
+    active_states = {"READY", "RUNNING"}
+    still_pending = []
+    for task in pending_tasks:
+        try:
+            state = task.status().get("state")
+            if state in active_states:
+                still_pending.append(task)
+        except Exception:
+            # If status fails, keep task to be safe
+            still_pending.append(task)
+    return still_pending
+
+
+def wait_for_pending_slot(max_pending: int, poll_seconds: int):
+    while True:
+        with pending_lock:
+            current_pending = len(pending_tasks)
+            if current_pending < max_pending:
+                return
+        print(f"Pending tasks: {current_pending}. Waiting for a slot...", flush=True)
+        #time.sleep(poll_seconds)
+        with pending_lock:
+            updated = _prune_finished_tasks()# already takes long, no sleep needed
+            pending_tasks.clear()
+            pending_tasks.extend(updated)
+
 
 def download_band_placeholder(image, out_path, region):
     with ee_semaphore:
@@ -104,29 +137,36 @@ def download_band_placeholder(image, out_path, region):
             maxPixels=1e13,
         )
 
-        task.start()
-        #time.sleep(1.2 + random.random() * 0.6)
+        task.start()#
+        #time.sleep(1.2 + random.random() * 0.6)#
+
+
 
 def log_missing_split(base_name: str):
     with missing_split_lock:
         with open(MISSING_SPLIT_PATH, "a") as f:
             f.write(f"{base_name}\n")
-
-def log_base_name(base_name: str):
-    with base_lock:
-        with open(BASE_NAMES_PATH, "a") as f:
-            f.write(f"{base_name}\n")
-            f.flush()
-
+            
 def log_not_in_bucket(base_name: str):
     with bucket_lock:
         with open(BUCKET_MISSING_PATH, "a") as f:
             f.write(f"{base_name}\n")
+
+def already_in_bucket(base_name: str):
+    with names_lock:
+        with open(BASE_PATH, "a") as f:
+            f.write(f"{base_name}\n")
+
+
+
 # -----------------------
 # Sentinel-2 fetch
 # -----------------------
 def get_s2_image(point, image_date):
-    dt = datetime.datetime.fromisoformat(image_date.replace("Z", ""))
+    if isinstance(image_date, str):
+        dt = datetime.datetime.fromisoformat(image_date.replace("Z", ""))
+    else:
+        dt = image_date
     start = dt - datetime.timedelta(hours=12)
     end = dt + datetime.timedelta(hours=12)
 
@@ -150,19 +190,16 @@ def get_s2_image(point, image_date):
 def process_row(idx, row, split_sets):
     lat = row["latitude"]
     lon = row["longitude"]
-    image_date = row["image_date"]
+    image_date = random_past_date_from_row(row["image_date"])
     point_num = row["thumbnail_file"][:-4]
     country = row["country"]
-    if country.lower() in ["uruguay", "new_zealand","ireland", "france", "finland", "cuba"]:
-        country_aux = f"modis_{country}"
-    else:
-        country_aux = country
+    #if country.lower() in ["new zealand"]:
+     #   country = "Zealand"
+    #    country = f"modis_{country}"
 
     # Check where it should go
-    base_name = f"fire_{country_aux}_{point_num}.png"
-    print(f"Processing row {idx}: {base_name}")
-    #log_base_name(base_name)
-    #print(f"Logged index {idx}")
+    base_name = f"no_fire_{country}_{point_num}.png"
+    #log_missing_split(base_name)  # Log every file name for later analysis of missing splits    
     split_prefix = None
     for split_name, name_set in split_sets.items():
         if base_name in name_set:
@@ -170,40 +207,36 @@ def process_row(idx, row, split_sets):
             break
     
     if split_prefix is None:
-        #print(f"File name not found in split lists: {base_name}")
         log_missing_split(base_name)
-        print(f"No split for file {base_name}")
+        print(f"File name not found in split lists: {base_name}")
         return
 
-    out_path = f"{split_prefix}/Fire/{country}_{point_num}"
+    out_path = f"{split_prefix}/No_Fire/{country}_{point_num}"
     gcs_path = f"{out_path}.tif"
-
 
     # Check if is already in the bucket
     if file_exists(gcs_path):
-          #Log missing split for files that exist but aren't in the split lists
-        save_last_row(idx)  # Save progress even if skipping
-        log_base_name(base_name)
-        #print(f"File exists, skipping index {idx}.")
-        return
-    #log_not_in_bucket
-    print(f"Processing index {idx}: {base_name}")
+       already_in_bucket(base_name)
+       save_last_row(idx)  # Save progress even if skipping
+       return
+
+    print(f"Processing {idx}: {base_name}")
     log_not_in_bucket(base_name)
-    if pd.isna(image_date):
+    if pd.isna(random):
         return
-    return
+    
     point = ee.Geometry.Point(lon, lat)
     region = point.buffer(2000)
 
     image = get_s2_image(point, image_date)
     if image is None:
         return
-    
+
     download_band_placeholder(image, out_path, region)
     with counting_lock:
         global IMAGES_SUBMITTED
         IMAGES_SUBMITTED += 1
-    #save_last_row(idx)
+    #save_last_row(idx)  # Save progress even if skipping
 
       # Save progress AFTER successful submission
 
@@ -211,6 +244,7 @@ def process_row(idx, row, split_sets):
 # Main
 # -----------------------
 def main(start_line: int = 0):
+    #ee.Initialize(project="wildfires-479718")
     ee.Initialize(project="fire-detection-uruguay")
 
     df = pd.read_csv(CSV_PATH)
@@ -223,18 +257,18 @@ def main(start_line: int = 0):
         df = df.iloc[start_line:]
 
     split_sets = {
-        "train": set(pd.read_csv("file_names/train_Fire.csv")["filename"]),
-        "val": set(pd.read_csv("file_names/val_Fire.csv")["filename"]),
-        "test": set(pd.read_csv("file_names/test_Fire.csv")["filename"]),
+        "train": set(pd.read_csv("train_No_Fire.csv")["filename"]),
+        "val": set(pd.read_csv("val_No_Fire.csv")["filename"]),
+        "test": set(pd.read_csv("test_No_Fire.csv")["filename"]),
     }
-    args_list = [(idx, row, split_sets) for idx, row in df.iterrows()]
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
+        args_list = [(idx, row, split_sets) for idx, row in df.iterrows()]
         list(
             tqdm(
                 executor.map(
                     lambda args: process_row(*args),
-                    args_list,
+                    args_list
                 ),
                 total=len(df),
             )

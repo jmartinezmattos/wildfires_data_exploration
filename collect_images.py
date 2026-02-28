@@ -136,7 +136,7 @@ def download_thumbnail(image, filename, point, satellite, bands=['B4','B3','B2']
         image = image.select(bands).multiply(0.0000275).add(-0.2)
         vmin, vmax = 0, 0.3
     elif satellite == "sentinel-2":
-        bands = ['B4', 'B3', 'B2']
+        bands = ['B4', 'B3', 'B2', 'B5', 'B11']
         vmin, vmax = 0, 6000
     elif satellite == "aqua":
         bands = ['sur_refl_b01','sur_refl_b04','sur_refl_b03']
