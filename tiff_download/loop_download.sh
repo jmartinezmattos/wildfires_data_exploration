@@ -2,11 +2,12 @@
 
 PYTHON_SCRIPT="collect_no_fire_bands.py"
 QUEUE_LIMIT=2500
-CHECK_INTERVAL=3600
+CHECK_INTERVAL=600
 
-#echo "Starting, waiting"
+echo "Starting, waiting"
 #sleep 4000
-sleep $CHECK_INTERVAL
+
+#sleep $CHECK_INTERVAL
 
 while true; do
 

@@ -65,7 +65,7 @@ THUMB_SIZE = config["THUMB_SIZE"]
 MAX_IMAGES_PER_POINT = config["MAX_IMAGES_PER_POINT"]
 MAX_TIME_DIFF_HOURS = config["MAX_TIME_DIFF_HOURS"]
 CLOUD_FILTER_PERCENTAGE = config["CLOUD_FILTER_PERCENTAGE"]
-OUTPUT_CSV = f"{OUTPUT_IMG_DIR}/firms_features.csv"
+OUTPUT_CSV = f"{OUTPUT_IMG_DIR}/firms_features_no_fire.csv"
 
 # Set buffer depending on satellite type
 BUFFER_METERS = config["BUFFER_METERS"].get(IMAGES_SATELLITE, config["BUFFER_METERS"]["default"])
@@ -136,7 +136,8 @@ def download_thumbnail(image, filename, point, satellite, bands=['B4','B3','B2']
         image = image.select(bands).multiply(0.0000275).add(-0.2)
         vmin, vmax = 0, 0.3
     elif satellite == "sentinel-2":
-        bands = ['B4', 'B3', 'B2', 'B5', 'B11']
+        # Earth Engine thumbnail visualization supports 1-3 bands only.
+        bands = ['B4', 'B3', 'B2']
         vmin, vmax = 0, 6000
     elif satellite == "aqua":
         bands = ['sur_refl_b01','sur_refl_b04','sur_refl_b03']

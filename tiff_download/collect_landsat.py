@@ -17,21 +17,22 @@ import argparse
 import random
 import threading
 from google.cloud import storage
+import csv
 
 import ee
 import pandas as pd
 from tqdm import tqdm
 
 
-MISSING_SPLIT_PATH = "missing_split_prefix.txt"
-GCS_FILES_FILE = "file_names_combined.csv"
-BUCKET = "fire_dataset_2"
+MISSING_SPLIT_PATH = "missing_split_prefix_fire.txt"
+BUCKET = "fire_dataset_3"
+TIME_DIFF_PATH = "time_differences_b10.csv"
 
 PROGRESS_PATH = "progress.json"
-BASE_NAMES_PATH = "already_in_bucket.txt"
+BASE_NAMES_PATH = "already_in_bucket_fire.txt"
 BUCKET_MISSING_PATH = "bucket_missing_files.txt"
 missing_split_lock = threading.Lock()
-progress_lock = threading.Lock()
+time_diff_lock = threading.Lock()
 bucket_lock = threading.Lock()
 base_lock = threading.Lock()
 counting_lock = threading.Lock()
@@ -46,34 +47,12 @@ def file_exists(path):# fixme CAMBIAR DESPUÉS A QUE NO USE BUCKET
     return blob.exists()
 
 
-def load_last_row():
-    if not os.path.exists(PROGRESS_PATH):
-        return 0
-    with open(PROGRESS_PATH, "r") as f:
-        data = json.load(f)
-    return data.get("last_row", 0)
-
-
-def save_last_row(idx):
-    with progress_lock:
-        with open(PROGRESS_PATH, "w") as f:
-            json.dump({"last_row": idx}, f)
-
-
-# -----------------------
-# Config
-# -----------------------
-CONFIG_PATH = "config/collect_images_config.json"
-CSV_PATH = "data/fire/firms_features_merged_last.csv"
+# ---------------------
+CSV_PATH = "firms_features_merged_last.csv"
 
 NUM_THREADS = 6  # 🔥 IMPORTANT: EE-safe
 MAX_PENDING_TASKS = 500
 POLL_SECONDS = 20
-
-if os.path.exists(CONFIG_PATH):
-    with open(CONFIG_PATH, "r") as f:
-        config = json.load(f)
-    GEE_PROJECT = config.get("GEE_PROJECT")
 
 BANDS_TO_EXTRACT = [
     "B2", "B3", "B4", "B8", "B11", "B12",
@@ -88,23 +67,22 @@ ee_semaphore = threading.Semaphore(1)
 # -----------------------
 
 def download_band_placeholder(image, out_path, region):
-    with ee_semaphore:
-        proj = image.select("B2").projection()
-        region_utm = region.transform(proj, 1)
+        with ee_semaphore:
+            #proj = image.select("B2").projection()
+            #region_utm = region.transform(proj, 1)
 
-        task = ee.batch.Export.image.toCloudStorage(
-            image=image.clip(region_utm),
-            bucket=BUCKET,
-            fileNamePrefix=out_path,
-            region=region_utm,
-            crs=proj.crs(),
-            scale=10,
-            fileFormat="GeoTIFF",
-            formatOptions={"cloudOptimized": True},
-            maxPixels=1e13,
-        )
+            task = ee.batch.Export.image.toCloudStorage(
+                image=image.clip(region),
+                bucket=BUCKET,
+                fileNamePrefix=out_path,
+                region=region,
+                scale=10,
+                fileFormat="GeoTIFF",
+                formatOptions={"cloudOptimized": True},
+                maxPixels=1e13,
+            )
 
-        task.start()
+            task.start()
         #time.sleep(1.2 + random.random() * 0.6)
 
 def log_missing_split(base_name: str):
@@ -122,10 +100,36 @@ def log_not_in_bucket(base_name: str):
     with bucket_lock:
         with open(BUCKET_MISSING_PATH, "a") as f:
             f.write(f"{base_name}\n")
-# -----------------------
+
+def log_times(sentinel_img, landsat_img, diff_seconds, skip=False):
+
+    with time_diff_lock:
+
+        if skip:
+            row = [0, 0, 0]
+        else:
+            sentinel_time = sentinel_img.get("system:time_start").getInfo()
+            landsat_time = landsat_img.get("system:time_start").getInfo()
+
+            sentinel_time = datetime.datetime.fromtimestamp(sentinel_time / 1000)
+            landsat_time = datetime.datetime.fromtimestamp(landsat_time / 1000)
+
+            row = [
+                sentinel_time.isoformat(),
+                landsat_time.isoformat(),
+                diff_seconds
+            ]
+
+        with open(TIME_DIFF_PATH, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(row)
 # Sentinel-2 fetch
 # -----------------------
 def get_s2_image(point, image_date):
+    
+    #point = ee.Geometry.Point(lon, lat)
+    #region = point.buffer(2000).bounds()
+    
     dt = datetime.datetime.fromisoformat(image_date.replace("Z", ""))
     start = dt - datetime.timedelta(hours=12)
     end = dt + datetime.timedelta(hours=12)
@@ -140,6 +144,47 @@ def get_s2_image(point, image_date):
 
     # Just take first image without checking size
     image = ee.Image(collection.first())
+
+    sentinel_time = ee.Date(image.get("system:time_start"))
+
+    landsat = (
+    ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+    .merge(ee.ImageCollection("LANDSAT/LC09/C02/T1_L2"))
+    .filterBounds(point)
+    .filterDate(start, end)
+    .select("ST_B10")
+    )
+
+    if landsat.size().getInfo() == 0:
+        log_times(image, ee.Image(),None, True)
+        return
+    
+    def add_time_diff(img):
+        diff = ee.Number(img.date().difference(sentinel_time, "second")).abs()
+        return img.set("time_diff", diff)
+
+    landsat = landsat.map(add_time_diff)
+
+    landsat_closest = ee.Image(
+    landsat.sort("time_diff").first()
+    )
+
+    diff_seconds = landsat_closest.get("time_diff").getInfo()
+    log_times(image, landsat_closest, diff_seconds)
+
+    thermal = (
+    landsat_closest
+    .select("ST_B10")
+    .multiply(0.00341802)
+    .add(149.0)
+    .rename("thermal")
+    )
+    
+    thermal = thermal.reproject(
+    crs=image.projection(),
+    scale=30
+)
+
 
     return image
 
@@ -161,71 +206,60 @@ def process_row(idx, row, split_sets):
     # Check where it should go
     base_name = f"fire_{country_aux}_{point_num}.png"
     print(f"Processing row {idx}: {base_name}")
-    #log_base_name(base_name)
-    #print(f"Logged index {idx}")
     split_prefix = None
     for split_name, name_set in split_sets.items():
         if base_name in name_set:
             split_prefix = split_name
             break
     
-    if split_prefix is None:
+    """     if split_prefix is None:
         #print(f"File name not found in split lists: {base_name}")
         log_missing_split(base_name)
         print(f"No split for file {base_name}")
-        return
+        return """
 
     out_path = f"{split_prefix}/Fire/{country}_{point_num}"
     gcs_path = f"{out_path}.tif"
 
 
     # Check if is already in the bucket
-    if file_exists(gcs_path):
+    #if file_exists(gcs_path):
           #Log missing split for files that exist but aren't in the split lists
-        save_last_row(idx)  # Save progress even if skipping
-        log_base_name(base_name)
+        #log_base_name(base_name)
         #print(f"File exists, skipping index {idx}.")
-        return
+        #return
     #log_not_in_bucket
     print(f"Processing index {idx}: {base_name}")
-    log_not_in_bucket(base_name)
+    #log_not_in_bucket(base_name)
     if pd.isna(image_date):
         return
-    return
+    
     point = ee.Geometry.Point(lon, lat)
-    region = point.buffer(2000)
+    region = point.buffer(2000).bounds()
 
     image = get_s2_image(point, image_date)
     if image is None:
         return
-    
+    return ## SACAR ESTO DESPUÉS
     download_band_placeholder(image, out_path, region)
     with counting_lock:
         global IMAGES_SUBMITTED
         IMAGES_SUBMITTED += 1
-    #save_last_row(idx)
 
       # Save progress AFTER successful submission
 
 # -----------------------
 # Main
 # -----------------------
-def main(start_line: int = 0):
+def main():
     ee.Initialize(project="fire-detection-uruguay")
 
     df = pd.read_csv(CSV_PATH)
 
-    if start_line == 0:
-        start_line = load_last_row()
-        print(f"Resuming from row {start_line}")
-
-    if start_line > 0:
-        df = df.iloc[start_line:]
-
     split_sets = {
-        "train": set(pd.read_csv("file_names/train_Fire.csv")["filename"]),
-        "val": set(pd.read_csv("file_names/val_Fire.csv")["filename"]),
-        "test": set(pd.read_csv("file_names/test_Fire.csv")["filename"]),
+        "train": set(pd.read_csv("train_Fire.csv")["filename"]),
+        "val": set(pd.read_csv("val_Fire.csv")["filename"]),
+        "test": set(pd.read_csv("test_Fire.csv")["filename"]),
     }
     args_list = [(idx, row, split_sets) for idx, row in df.iterrows()]
 
@@ -242,10 +276,7 @@ def main(start_line: int = 0):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--start-line", type=int, default=0)
-    args = parser.parse_args()
-    main(args.start_line)
+    main()
     if IMAGES_SUBMITTED == 0:
         print("No new images were found to download. Signal Bash to stop.")
         sys.exit(10) # Tell Bash to break the loop

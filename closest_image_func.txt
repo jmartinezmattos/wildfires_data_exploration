@@ -1,0 +1,27 @@
+def get_ee_image(idx, point, target_date):
+    start_date = target_date - datetime.timedelta(days=7)
+    end_date = target_date + datetime.timedelta(days=7)
+    collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
+        .filterBounds(point)\
+        .filterDate(start_date, end_date)
+    if collection.size().getInfo() == 0:
+        print(f"No images found for point {idx} at date range [{start_date}, {end_date}] for point {point}")
+        return None
+    images_list = collection.toList(collection.size())
+    closest_image = None
+    min_diff = None
+    for i in range(images_list.size().getInfo()):
+        img = ee.Image(images_list.get(i))
+        info = img.getInfo()
+        if 'bands' not in info:
+            continue
+        bands = [b['id'] for b in info['bands']]
+        required_bands = ['B4','B3','B2']
+        if not all(b in bands for b in required_bands):
+            continue
+        img_date = datetime.datetime.fromtimestamp(info['properties']['system:time_start'] / 1000)
+        diff = abs((img_date - target_date).total_seconds())
+        if min_diff is None or diff < min_diff:
+            min_diff = diff
+            closest_image = img
+    return closest_image
