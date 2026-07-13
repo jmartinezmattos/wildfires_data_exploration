@@ -1,0 +1,4 @@
+fire_train_Cuba_point_012502.png
+fire_train_New_Zealand_point_02438.png
+fire_United_Kingdom_point_036352.png
+fire_train_Spain_point_02055.png

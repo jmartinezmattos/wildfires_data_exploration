@@ -1,0 +1,20 @@
+{
+    "GEE_PROJECT": "fire-detection-uruguay",
+    "IMAGES_SATELLITE": "sentinel-2",
+    "COUNTRY": "Philippines",
+    "FIRMS_INSTRUMENT": "MODIS",
+    "CSV_PATH": null,
+    "BUFFER_METERS": {
+        "default": 2000,
+        "aqua": 30000,
+        "fengyun": 30000
+    },
+    "THUMB_SIZE": 1024,
+    "MAX_IMAGES_PER_POINT": 1,
+    "MAX_TIME_DIFF_HOURS": 10,
+    "CLOUD_FILTER_PERCENTAGE": 85,
+    "OLD_RUN_DIR": null,
+    "NUM_THREADS": 100,
+    "MIN_CONFIDENCE_MODIS": 70,
+    "MIN_CONFIDENCE_VIIRS": "n"
+}

@@ -9,7 +9,7 @@ import concurrent.futures
 
 from collect_images import download_thumbnail
 
-CONFIG_FILE = "config/collect_no_fire_images_config.json"
+CONFIG_FILE = "collect_no_fire_images_config.json"
 
 with open(CONFIG_FILE, "r") as f:
     config = json.load(f)
@@ -21,6 +21,7 @@ BUFFER_METERS = config.get("BUFFER_METERS")
 OUTPUT_IMG_DIR = f"data/no_fire_images_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 OUTPUT_CSV = os.path.join(OUTPUT_IMG_DIR, "no_fire_images.csv")
 NUM_THREADS = config.get("NUM_THREADS", 4)
+random.seed(42) # For reproducibility
 
 os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
 
@@ -109,7 +110,7 @@ if __name__ == "__main__":
 
     ee.Initialize(project=GEE_PROJECT)
 
-    df = pd.read_csv("data/fire/firms_features_merged.csv")
+    df = pd.read_csv("data/fire/firms_features_merged_last_matched.csv")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
         list(
